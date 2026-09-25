@@ -50,13 +50,21 @@ import time
 
 import numpy as np
 
+from text_utils import (count_phrase, direction_words, join_or, natural_join, side_text, spoken_feet,  # noqa: F401
+                        target_phrase, text_matches, text_words, with_article)
+from scene_memory import ROOM_THINGS, SceneMemory, classify_place  # noqa: F401
+from place_search import PlaceSearch
+from target_lock import TargetLock  # noqa: F401  (find mode: lock, world anchor, report)
+from exit_planner import (BUILDING_EXIT, EXIT_REQUEST, EXIT_SAY, ROOM_EXIT, exit_spec,  # noqa: F401
+                          plan_exit)
+
 try:  # the LLM part is optional: without intent_llm.py the server runs rules-only
     from intent_llm import LLMIntent, clean_llm
 except ImportError:
     LLMIntent = clean_llm = None
 
 PROTOCOL = "fusion-1"
-VERSION = "2026-09-25 voice+find+cameratracker+bearing+signs-ocr+llm(intent_llm.py)"
+VERSION = "2026-09-25 voice+find+cameratracker+bearing+signs-ocr+llm(intent_llm.py)+exit-planner+place-search+anchored-target"
 
 DEFAULT_CLASSES = [
     "person", "chair", "table", "desk", "door", "stairs", "couch", "bed", "bench", "trash can",
@@ -70,7 +78,6 @@ MIN_CONFIDENCE = 1       # ARKit: 0 low, 1 medium, 2 high
 FLOOR_MARGIN = 0.10      # points this close above the floor count as floor (m)
 MAX_DEPTH = 5.5          # LiDAR is unreliable beyond this (m)
 BOX_SHRINK = 0.10        # ignore the outer 10% of each box (background leaks in)
-SIDE_THRESHOLD = 0.25    # |lateral| above this is "left"/"right" (m)
 
 
 class FrameData:
@@ -103,6 +110,28 @@ class FrameData:
         x0, y0 = max(0, x0), max(0, y0)
         x1, y1 = min(self.w - 1, x1), min(self.h - 1, y1)
         return x0, y0, x1, y1
+
+    def space_hint(self):
+        """Coarse shape of the space ahead from this frame's depth (used to tell a hallway
+        from a room): is it open straight ahead, and are there walls close on each side?"""
+        ys, xs = np.mgrid[0:self.h:4, 0:self.w:4]
+        d = self.depth[ys, xs].astype(np.float64)
+        ok = (self.confidence[ys, xs] >= MIN_CONFIDENCE) & np.isfinite(d) & (d > 0.2) & (d < MAX_DEPTH)
+        if ok.sum() < 200:
+            return None
+        d, xs, ys = d[ok], xs[ok], ys[ok]
+        cam = np.stack([(xs + 0.5 - self.cx) / self.fx * d, -((ys + 0.5 - self.cy) / self.fy * d), -d, np.ones_like(d)])
+        world = self.T @ cam
+        keep = (world[1] > self.floor_y + 0.3) & (world[1] < self.cam_pos[1] + 0.3)  # waist-to-head band
+        rel = np.stack([world[0] - self.cam_pos[0], world[2] - self.cam_pos[2]])[:, keep]
+        ahead, lateral = self.forward @ rel, self.right @ rel
+        center = ahead[np.abs(lateral) < 0.4]
+        open_ahead = center.size < 15 or np.percentile(center, 10) > 3.5
+        band = (ahead > 1.5) & (ahead < 5.0)
+        left = (lateral < -0.4) & (lateral > -2.2) & band
+        right = (lateral > 0.4) & (lateral < 2.2) & band
+        return {"open_ahead": bool(open_ahead), "wall_left": int(left.sum()) >= 30,
+                "wall_right": int(right.sum()) >= 30}
 
     def bearing(self, box):
         """Horizontal direction of the box centre relative to the walking direction, in degrees
@@ -148,16 +177,6 @@ class FrameData:
         return near, side, in_path
 
 
-def side_text(lateral):
-    if lateral is None:
-        return None
-    if lateral < -SIDE_THRESHOLD:
-        return "left"
-    if lateral > SIDE_THRESHOLD:
-        return "right"
-    return "ahead"
-
-
 def unpack_payload(meta, payload):
     (jpeg_len,) = struct.unpack_from("<I", payload, 0)
     w, h = int(meta["depth"]["w"]), int(meta["depth"]["h"])
@@ -197,24 +216,6 @@ ROOM_RE = re.compile(r"\broom (?:number )?(\d{1,4}[a-z]?)\b")
 PLACE_BLOCK = re.compile(r"\b(?:stop|cancel|not|dont|never|without|avoid)\b")
 
 
-def text_words(text):
-    t = (text or "").lower().replace("’", "").replace("'", "")
-    return re.findall(r"[a-z0-9]+", t)
-
-
-def text_matches(text, keywords):
-    """Whole-word match, so "women" does not match "men" and "204" does not match "2045"."""
-    tokens = text_words(text)
-    if not tokens:
-        return False
-    joined = f" {' '.join(tokens)} "
-    for k in keywords:
-        kt = " ".join(text_words(k))
-        if kt and (f" {kt} " in joined):
-            return True
-    return False
-
-
 def parse_place(clean):
     """clean = lowercase words. Returns "restroom", "exit", "room 204" or None."""
     if PLACE_BLOCK.search(clean):
@@ -231,6 +232,8 @@ def parse_place(clean):
 def resolve_target(label, classes):
     """Target name -> spec dict, or None if this server can't look for it."""
     classes = set(classes)
+    if label == "exit":   # re-sent by the phone after a reconnect: sign first, then the door by it
+        return exit_spec("hallway", classes)
     if label in PLACES:
         p = PLACES[label]
         cl = {c for c in p["classes"] if c in classes}
@@ -245,23 +248,6 @@ def resolve_target(label, classes):
     if label in classes:
         return {"label": label, "classes": {label}, "keywords": [], "specific": {label}}
     return None
-
-
-def spoken_feet(meters):
-    feet = meters * 3.28084
-    if feet < 1:
-        return "under 1 foot"
-    n = int(round(feet))
-    return "1 foot" if n == 1 else f"{n} feet"
-
-
-def direction_words(bearing):
-    if bearing is None:
-        return "ahead"
-    side = "left" if bearing < 0 else "right"
-    a = abs(bearing)
-    return ("straight ahead" if a < 8 else f"slightly {side}" if a < 25
-            else f"to your {side}" if a < 60 else f"far {side}")
 
 
 def group_text_items(items):
@@ -356,7 +342,9 @@ class Detector:
         except (AttributeError, TypeError):
             self.model.set_classes(classes)
         self.model_path = model_path
-        self.classes = classes
+        self.classes = classes          # base classes (what the phone is told)
+        self.active_classes = list(classes)
+        self._pending_classes = None    # set_prompts() -> applied before the next frame
         self.imgsz = imgsz
         self.tracker = tracker          # built-in fallback config, e.g. botsort.yaml
         self.device = device
@@ -445,6 +433,24 @@ class Detector:
         """OCR on the whole frame (for "read the sign"); links text to nearby doors/signs."""
         return self.ocr.infer(bgr, objects).get("items", [])
 
+    def set_prompts(self, classes):
+        """Change YOLOE's text prompts (a place search adds sign phrases, then removes them).
+        Applied on the GPU thread right before the next frame, never during one."""
+        self._pending_classes = list(classes)
+
+    def _apply_prompts(self):
+        classes, self._pending_classes = self._pending_classes, None
+        if classes is None or classes == getattr(self, "active_classes", self.classes):
+            return
+        t0 = time.perf_counter()
+        try:
+            self.model.set_classes(classes, self.model.get_text_pe(classes))
+        except (AttributeError, TypeError):
+            self.model.set_classes(classes)
+        self.model.predictor = None  # rebuild with the new names
+        self.active_classes = classes
+        print(f"Prompts: YOLOE now has {len(classes)} classes ({(time.perf_counter() - t0) * 1000:.0f} ms)")
+
     def new_session(self):
         """Tracking state for one phone connection."""
         if self.camera_tracker_cls:
@@ -455,6 +461,8 @@ class Detector:
     def __call__(self, bgr, confidence, session, target):
         """Returns (detections, tracking_info). `target` is a set of class names (or None);
         only those detections get track ids."""
+        if getattr(self, "_pending_classes", None) is not None:
+            self._apply_prompts()
         height, width = bgr.shape[:2]
         if session["kind"] == "camera":
             tracker = session["tracker"]
@@ -511,6 +519,7 @@ def process_frame(detector, sess, meta, payload, confidence):
     t0 = time.perf_counter()
     jpeg, depth, conf = unpack_payload(meta, payload)
     frame = FrameData(meta, depth, conf)
+    sess["last_frame"] = frame          # for the place search planner (floor map, headings)
     bgr = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
     if bgr is None:
         raise ValueError("bad JPEG")
@@ -534,6 +543,8 @@ def process_frame(detector, sess, meta, payload, confidence):
     objects.sort(key=lambda o: o["distance_m"] if o["distance_m"] is not None else 99)
 
     now = time.monotonic()
+    if sess.get("scene") is not None:
+        sess["scene"].add_frame(now, objects, frame.space_hint())
     if getattr(detector, "ocr", None) is not None and spec and spec["keywords"]:
         read_target_text(detector, sess, bgr, objects, tracking, now)
 
@@ -558,6 +569,9 @@ def process_frame(detector, sess, meta, payload, confidence):
             else:
                 say = describe_read(groups)
             read = {"say": say, "groups": groups}
+            if sess.get("scene") is not None:
+                for g in groups:
+                    sess["scene"].add_text(now, " ".join(g["texts"]))
         sess["read_mode"] = None
     return objects, tracking, read, (t2 - t1) * 1000, (time.perf_counter() - t0) * 1000
 
@@ -607,187 +621,13 @@ def read_target_text(detector, sess, bgr, objects, tracking, now):
         if text:
             entry["text"] = text
             o["text"] = text
+            if sess.get("scene") is not None:
+                sess["scene"].add_text(now, text)
             print(f"OCR: #{o['track_id']} {o['label']} reads {text!r}")
 
 
 # ----------------------------------------------------------------------------- find mode
-class TargetLock:
-    """Find mode: lock onto ONE tracked candidate of the target spec and report it every frame.
-
-    Same idea as yolo_live/voice_direction.TargetController (lock a BoT-SORT id, tolerate
-    short dropouts), but the report is metric (distance + sideways offset from LiDAR).
-    Candidates: objects of the spec's classes. With keywords (places), a candidate whose
-    OCR text matches is preferred; "specific" classes (e.g. "restroom sign") count on their
-    own; generic ones (sign, door) only count when their text matches.
-    """
-
-    LOST_GRACE = 3.0  # seconds without an id update before searching again (built-in tracker)
-
-    def __init__(self):
-        self.cancel()
-
-    def cancel(self):
-        self.spec = None
-        self.label = None
-        self.side = None          # "left" / "center" / "right" / None
-        self.exclude = set()      # labels to ignore (filled by the future LLM parser)
-        self.prefer = "nearest"
-        self.skip_ids = set()     # track ids rejected with "another one"
-        self.track_id = None
-        self.last_seen = None
-        self.ever_seen = False
-        self.generation = None
-        self.smooth = None        # (distance, lateral) of the locked object, smoothed
-        self.smooth_bearing = None
-
-    def find(self, spec, side=None, exclude=(), prefer=None):
-        self.cancel()
-        self.spec = spec
-        self.label = spec["label"]
-        self.side = side
-        self.exclude = set(exclude or ())
-        self.prefer = prefer or "nearest"
-
-    def another(self):
-        if self.track_id is not None:
-            self.skip_ids.add(self.track_id)
-        self._unlock()
-
-    def set_side(self, side):
-        self.side = side
-        self._unlock()
-
-    def _unlock(self):
-        self.track_id = None
-        self.last_seen = None
-        self.smooth = None
-        self.smooth_bearing = None
-
-    def _bearing(self, obj):
-        b = obj.get("bearing_deg")
-        if b is None:
-            return None
-        if self.smooth_bearing is not None and abs(self.smooth_bearing - b) < 20:
-            b = 0.5 * self.smooth_bearing + 0.5 * b
-        self.smooth_bearing = b
-        return round(b, 1)
-
-    def _smoothed(self, obj):
-        d, l = obj["distance_m"], obj["lateral_m"]
-        if d is None or l is None:
-            return d, l
-        if self.smooth and abs(self.smooth[0] - d) < 0.8:
-            d = 0.5 * self.smooth[0] + 0.5 * d
-            l = 0.5 * self.smooth[1] + 0.5 * l
-        self.smooth = (d, l)
-        return round(d, 3), round(l, 3)
-
-    @staticmethod
-    def side_of(obj):
-        s = obj.get("side")
-        if s:
-            return "center" if s == "ahead" else s
-        u = (obj["box"][0] + obj["box"][2]) / 2
-        return "left" if u < 1 / 3 else "right" if u > 2 / 3 else "center"
-
-    def _score(self, o):
-        """2 = confirmed by sign text, 1 = counts by class alone, None = not a candidate."""
-        if o["label"] not in self.spec["classes"] or o["label"] in self.exclude:
-            return None
-        if o.get("track_id") is None or o["track_id"] in self.skip_ids:
-            return None
-        if self.spec["keywords"] and text_matches(o.get("text"), self.spec["keywords"]):
-            return 2
-        if o["label"] in self.spec["specific"]:
-            return 1
-        return None
-
-    def _near_ok(self, o, objects):
-        """"the sofa near the window": another object of a `near` class within `within_m`,
-        measured on the floor plane from the LiDAR positions (ahead, sideways)."""
-        near = self.spec.get("near")
-        if not near:
-            return True
-        if o.get("distance_m") is None or o.get("lateral_m") is None:
-            return False
-        for other in objects:
-            if (other is not o and other["label"] in near["classes"]
-                    and other.get("distance_m") is not None and other.get("lateral_m") is not None
-                    and np.hypot(other["distance_m"] - o["distance_m"],
-                                 other["lateral_m"] - o["lateral_m"]) <= near["within_m"]):
-                return True
-        return False
-
-    def _detail(self, o):
-        """What was actually found, when it isn't simply the target class ("restroom sign",
-        'door, sign reads "Women"')."""
-        if o["label"] == self.label and not o.get("text"):
-            return None
-        if o.get("text"):
-            return f'{o["label"]} that says "{o["text"][:40]}"'
-        return o["label"]
-
-    def _report(self, state, o):
-        d, l = self._smoothed(o)
-        return {"label": self.label, "side_filter": self.side, "state": state, "track_id": o["track_id"],
-                "matched": o["label"], "text": o.get("text"), "detail": self._detail(o),
-                "distance_m": d, "lateral_m": l, "side": side_text(l), "bearing_deg": self._bearing(o)}
-
-    def update(self, objects, now, tracking=None):
-        """tracking: CameraTracker info {"generation","alive_ids","retention_seconds"} or None."""
-        if not self.spec:
-            return None
-        base = {"label": self.label, "side_filter": self.side}
-        if tracking is not None:
-            if tracking.get("generation") != self.generation:
-                # Tracker was rebuilt (new target, new image size, or long gap): old ids are meaningless.
-                self.generation = tracking.get("generation")
-                self.skip_ids.clear()
-                self._unlock()
-
-        if self.track_id is not None:
-            for o in objects:
-                if o.get("track_id") == self.track_id:
-                    self.last_seen = now
-                    o["is_target"] = True
-                    return self._report("tracking", o)
-            if tracking is not None:
-                # CameraTracker keeps an unseen id alive (ReID can re-match it) for its retention time.
-                still_alive = (self.track_id in tracking.get("alive_ids", [])
-                               and now - self.last_seen <= tracking.get("retention_seconds", 10.0))
-            else:
-                still_alive = now - self.last_seen <= self.LOST_GRACE
-            if still_alive:
-                return {**base, "state": "lost_briefly", "track_id": self.track_id}
-            self._unlock()  # gone: fall through and search again
-
-        scored = [(self._score(o), o) for o in objects]
-        eligible = [(sc, o) for sc, o in scored
-                    if sc is not None and (self.side is None or self.side_of(o) == self.side)
-                    and self._near_ok(o, objects)]
-        if not eligible:
-            return {**base, "state": "searching", "seen_before": self.ever_seen}
-        best = max(sc for sc, _ in eligible)  # text-confirmed candidates win
-        pool = [o for sc, o in eligible if sc == best]
-        if self.prefer == "nearest":
-            pick = min(pool, key=lambda o: (o["distance_m"] is None, o["distance_m"] or 0, -o["confidence"]))
-        else:
-            pick = max(pool, key=lambda o: o["confidence"])
-        self.track_id, self.last_seen, self.ever_seen = pick["track_id"], now, True
-        self.smooth = None
-        self.smooth_bearing = None
-        pick["is_target"] = True
-        return self._report("acquired", pick)
-
-    def status_text(self):
-        if not self.label:
-            return "Not searching for anything."
-        where = f" on your {self.side}" if self.side in ("left", "right") else ""
-        return f"Looking for {target_phrase(self.label)}{where}."
-
-
-def target_phrase(label):
-    return label if label.startswith("room ") else with_article(label)
+# (scene memory + place rules: scene_memory.py; "find an exit": exit_planner.py)
 
 
 # ----------------------------------------------------------------------------- voice
@@ -810,17 +650,6 @@ VERIFY_QUESTION = re.compile(r"^(?:is (?:this|that|it|here)|am i (?:at|in|by)|ar
 READ_REQUEST = re.compile(r"^(?:please )?(?:can you )?(?:read|what does (?:it|this|that|the sign) say)\b")
 HELP_TEXT = ("You can say: find the door, find the restroom, take me to room 204, read the sign, "
              "another one, cancel, what's ahead, repeat, mute, or unmute.")
-
-
-def with_article(label):
-    return ("an " if label[:1] in "aeiou" else "a ") + label
-
-
-def join_or(items):
-    items = list(items)
-    if len(items) <= 1:
-        return "".join(items)
-    return ", ".join(items[:-1]) + ", or " + items[-1]
 
 
 def find_webui_dir(explicit=None):
@@ -946,6 +775,10 @@ def apply_llm(d, out, lock, session, classes):
 
 def voice_reply(text, interpreter, lock, session, classes, llm=None):
     """Rules first (instant); the LLM only when the rules can't handle the request."""
+    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "").replace("'", "")).split())
+    if (EXIT_REQUEST.search(clean) and not PLACE_BLOCK.search(clean)
+            and not READ_REQUEST.match(clean) and not VERIFY_QUESTION.match(clean)):
+        return plan_exit(text, clean, lock, session, classes, llm)
     reply = rules_reply(text, interpreter, lock, session, classes)
     if llm is None or reply["intent"] not in ("clarify", "unsupported"):
         return reply
@@ -959,6 +792,19 @@ def voice_reply(text, interpreter, lock, session, classes, llm=None):
     base = {"type": "voice_intent", "transcript": text, "intent": "clarify", "target": None,
             "exclude": [], "side": None, "prefer": None, "say": "", "candidates": [], "method": "llm"}
     return apply_llm(parsed, base, lock, session, classes)
+
+
+def voice_turn(text, interpreter, lock, session, classes, llm=None):
+    """One voice command: a yes/no for the place search first, then the normal rules / LLM;
+    a place find then starts the search planner (place_search.py)."""
+    search = session.get("search")
+    if search is None:
+        return voice_reply(text, interpreter, lock, session, classes, llm)
+    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "").replace("'", "")).split())
+    reply = search.answer(text, clean)
+    if reply is not None:
+        return reply
+    return search.after_reply(text, voice_reply(text, interpreter, lock, session, classes, llm))
 
 
 def rules_reply(text, interpreter, lock, session, classes):
@@ -1155,9 +1001,11 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
             await state["client"].close()
         state["client"] = ws
         lock = TargetLock()
-        session = {"candidates": [], "lock": lock, "tracking": detector.new_session(),
+        session = {"candidates": [], "lock": lock, "tracking": detector.new_session(), "scene": SceneMemory(),
                    "ocr_cache": {}, "read_pending": False, "last_ocr": 0.0,
                    "ocr": getattr(detector, "ocr", None) is not None}
+        search = PlaceSearch(detector, lock, session, detector.classes, llm)   # place_search.py
+        session["search"] = search
         confidence = 0.35
         pending_meta = None
         print(f"Phone connected: {peer}")
@@ -1181,7 +1029,7 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                         text = str(m.get("text", ""))[:400]
                         try:
                             reply = await loop.run_in_executor(
-                                voice_pool, voice_reply, text, interpreter, lock, session, detector.classes, llm)
+                                voice_pool, voice_turn, text, interpreter, lock, session, detector.classes, llm)
                         except Exception as e:  # noqa: BLE001
                             reply = {"type": "voice_intent", "intent": "unsupported", "transcript": text,
                                      "target": None, "exclude": [], "side": None, "prefer": None,
@@ -1196,7 +1044,10 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                         action = m.get("action")
                         if action == "cancel":
                             lock.cancel()
+                            for g in search.on_target(action, m.get("reason"), time.monotonic()):
+                                await safe_send(ws, g)
                         elif action == "find":
+                            search.on_target(action, None, time.monotonic())
                             spec = resolve_target(m.get("label"), detector.classes)
                             if spec:
                                 lock.find(spec, side=m.get("side"), exclude=m.get("exclude") or (),
@@ -1216,15 +1067,27 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                         print(f"Frame {fid} failed: {e}")
                         await safe_send(ws, {"type": "error", "id": fid, "message": str(e)[:200]})
                         continue
-                    target = lock.update(objects, time.monotonic(), tracking)
+                    now = time.monotonic()
+                    target = lock.update(objects, now, tracking, frame=session.get("last_frame"))
                     await safe_send(ws, {"type": "result", "id": fid, "objects": objects, "target": target,
                                          "detector_ms": round(det_ms, 1), "server_ms": round(srv_ms, 1)})
+                    if search.planner is not None:
+                        try:
+                            guides = await loop.run_in_executor(None, search.on_frame, target, now)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"Search planner error: {e}")
+                            guides = []
+                        for g in guides:
+                            if g.get("say"):
+                                print(f"Guide [{g['stage']}]: {g['say']}")
+                            await safe_send(ws, g)
                     if read is not None:
                         print(f"Read: {read['say']}")
                         await safe_send(ws, {"type": "text_result", "say": read["say"], "groups": read["groups"]})
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
+            search.close()
             if state["client"] is ws:
                 state["client"] = None
             print(f"Phone disconnected: {peer}")
