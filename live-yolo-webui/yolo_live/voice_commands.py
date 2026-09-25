@@ -82,6 +82,9 @@ for alias, target in {
     "stairway": "stairs",
     "computer monitor": "monitor",
     "laptop computer": "laptop",
+    "restroom": "restroom sign",
+    "bathroom": "restroom sign",
+    "washroom": "restroom sign",
 }.items():
     if target in SUPPORTED:
         ALIASES.setdefault(normalize(alias), target)

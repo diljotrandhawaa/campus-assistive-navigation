@@ -15,8 +15,8 @@ import math
 CLASSES = (
     "table",
     "door",
-    "glass door",
-    "wooden door",
+    # "glass door",
+    # "wooden door",
     "sliding door",
     "revolving door",
     "trapdoor",
@@ -57,7 +57,9 @@ CLASSES = (
     "laptop",
     "keyboard",
     "printer",
-    "empty chair"
+    "empty chair",
+    "restroom sign",
+    "wall"
 )
 
 def position(box):
