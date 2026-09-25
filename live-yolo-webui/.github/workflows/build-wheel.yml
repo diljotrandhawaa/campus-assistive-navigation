@@ -1,0 +1,64 @@
+name: Build Python Wheel
+
+on:
+  push:
+    branches: [ main, feature/* ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # For uploading to GitHub Release
+      id-token: write  # For PyPI Trusted Publishing
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build wheel
+      run: python -m build
+
+    - name: Check wheel
+      run: |
+        twine check dist/*
+        ls -lh dist/
+
+    - name: Test wheel installation
+      run: |
+        pip install dist/*.whl
+        python -c "import live_vlm_webui; print(f'✅ Version: {live_vlm_webui.__version__}')"
+        live-vlm-webui --help
+
+    - name: Upload wheel as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-wheel
+        path: dist/*.whl
+        retention-days: 30
+
+    # Upload wheel to GitHub Release
+    - name: Upload wheel to GitHub Release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*.whl
+
+    # Publish to PyPI using Trusted Publishing (OIDC)
+    - name: Publish to PyPI
+      if: github.event_name == 'release'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: dist/

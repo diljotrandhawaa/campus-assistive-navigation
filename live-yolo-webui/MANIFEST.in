@@ -1,0 +1,16 @@
+include README.md
+include LICENSE
+include CONTRIBUTING.md
+include requirements.txt
+include pyproject.toml
+
+# Include static assets
+recursive-include src/live_vlm_webui/static *
+
+# Exclude build artifacts
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store
+
+

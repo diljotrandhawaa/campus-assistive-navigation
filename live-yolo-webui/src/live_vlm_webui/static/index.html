@@ -1,0 +1,4526 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live VLM WebUI - NVIDIA AI Platform</title>
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/svg+xml" href="favicon/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="favicon/favicon.ico">
+    <link rel="icon" type="image/png" sizes="96x96" href="favicon/favicon-96x96.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png">
+    <link rel="manifest" href="favicon/site.webmanifest">
+
+    <style>
+        :root {
+            /* NVIDIA Brand Colors */
+            --nvidia-green: #76B900;
+            --nvidia-green-dark: #5E9400;
+            --nvidia-green-light: #8BC919;
+
+            /* Dark theme (default - NVIDIA style) */
+            --bg-primary: #000000;
+            --bg-secondary: #111111;
+            --bg-tertiary: #1A1A1A;
+            --text-primary: #FFFFFF;
+            --text-secondary: #CCCCCC;
+            --text-muted: #999999;
+            --border-color: #333333;
+            --card-bg: #111111;
+            --card-hover: #1A1A1A;
+            --accent-color: #76B900;
+            --accent-hover: #5E9400;
+            --warning-color: #FFA726; /* Orange - better contrast on dark background */
+            --error-color: #EF5350;
+        }
+
+        body.light-theme {
+            /* Light theme (NVIDIA NGC style) */
+            --bg-primary: #FFFFFF;
+            --bg-secondary: #F8F8F8;
+            --bg-tertiary: #F0F0F0;
+            --text-primary: #000000;
+            --text-secondary: #333333;
+            --text-muted: #666666;
+            --border-color: #E0E0E0;
+            --card-bg: #FFFFFF;
+            --card-hover: #F8F8F8;
+            --accent-color: #76B900;
+            --accent-hover: #5E9400;
+            --warning-color: #F57C00; /* Darker orange - better contrast on light background */
+            --error-color: #D32F2F;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        /* Code styling for hostname */
+        code {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            padding: 2px 2px;
+            border-radius: 6px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 0.8em;
+            color: var(--accent-color);
+            white-space: nowrap;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent-color);
+            letter-spacing: -0.5px;
+            line-height: 1;
+        }
+
+        .title-section h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+        }
+
+        .title-section .subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .theme-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .theme-toggle:hover {
+            background: var(--card-hover);
+        }
+
+        .settings-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+        }
+
+        .settings-btn:hover {
+            background: var(--card-hover);
+        }
+
+        /* Settings Modal */
+        .settings-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .settings-modal.show {
+            display: flex;
+        }
+
+        .settings-dialog {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .settings-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .settings-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .settings-close:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .settings-body {
+            padding: 24px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+        }
+
+        .settings-section {
+            margin-bottom: 24px;
+        }
+
+        .settings-section:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Full width section for sections that need it */
+        .settings-section.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .settings-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .settings-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+            gap: 16px;
+        }
+
+        .settings-item:last-child {
+            border-bottom: none;
+        }
+
+        .settings-item-label {
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
+        .settings-item > div:first-child {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .settings-item-description {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-secondary);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+            background-color: white;
+        }
+
+        /* Settings Dropdown */
+        .settings-select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            width: 180px;
+            flex-shrink: 0;
+        }
+
+        .settings-select:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        /* Main Layout */
+        .container {
+            display: flex;
+            height: calc(100vh - 65px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 350px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            overflow-x: visible;
+            padding: 20px;
+        }
+
+        .panel {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: visible;
+        }
+
+        .panel-header {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .panel-header:hover {
+            background: var(--card-hover);
+        }
+
+        .panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel-icon {
+            font-size: 16px;
+        }
+
+        .panel-toggle {
+            color: var(--text-muted);
+            font-size: 12px;
+            transition: transform 0.2s;
+        }
+
+        .panel-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .panel-content {
+            padding: 16px;
+            max-height: 1000px;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            opacity: 1;
+            overflow: visible;
+        }
+
+        .panel-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            padding: 0 16px;
+            overflow: hidden;
+        }
+
+        #apiKeyField {
+            max-height: 100px;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            opacity: 1;
+            overflow: hidden;
+        }
+
+        #apiKeyField.collapsed {
+            max-height: 0;
+            opacity: 0;
+        }
+
+        #apiKeyToggle {
+            transition: transform 0.2s;
+        }
+
+        #apiKeyToggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: inherit;
+            transition: border 0.2s;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+        }
+
+        /* Prevent browser autofill blue background */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+            -webkit-box-shadow: 0 0 0 1000px var(--bg-tertiary) inset !important;
+            -webkit-text-fill-color: var(--text-primary) !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
+
+        /* Disabled input styling */
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: var(--bg-secondary);
+            color: var(--text-muted);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+            line-height: 1.5;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.3px;
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            color: white;
+            border: 1px solid var(--accent-color);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(118, 185, 0, 0.3);
+        }
+
+        /* Tab-style underline (for future use) */
+        .tab-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .tab-item.active {
+            border-bottom-color: var(--accent-color);
+        }
+
+        .tab-item:hover {
+            border-bottom-color: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--card-hover);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .icon-btn:hover:not(:disabled) {
+            background: var(--card-hover);
+            border-color: var(--accent-color);
+            transform: scale(1.1);
+        }
+
+        .icon-btn:active:not(:disabled) {
+            transform: scale(0.95);
+        }
+
+        .icon-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.4;
+            background: var(--bg-secondary);
+        }
+
+        .input-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Input Source Tabs */
+        .input-source-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 16px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        /* Beta Badge - Small and Rotated */
+        .beta-badge {
+            display: inline-block;
+            background: var(--warning-color);
+            color: #000;
+            font-size: 7px;
+            font-weight: 700;
+            padding: 1px 1px;
+            border-radius: 2px;
+            margin-left: -6px;
+            vertical-align: super;
+            letter-spacing: 0.3px;
+            transform: rotate(50deg);
+            transform-origin: center;
+        }
+
+        .input-source-tab {
+            flex: 1;
+            padding: 10px 2px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            transition: all 0.2s;
+        }
+
+        .input-source-tab:hover {
+            color: var(--text-primary);
+            background: rgba(118, 185, 0, 0.05);
+        }
+
+        .input-source-tab.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+        }
+
+        /* Tooltip */
+        .tooltip-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: var(--border-color);
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1;
+            cursor: help;
+            transition: all 0.2s;
+            flex-shrink: 0;
+            transform: translateY(-1px);
+        }
+
+        .tooltip-icon:hover {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .tooltip-text {
+            visibility: hidden;
+            opacity: 0;
+            position: fixed;
+            padding: 12px 16px;
+            background: var(--card-bg);
+            border: 1px solid var(--accent-color);
+            border-radius: 8px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            white-space: normal;
+            width: 380px;
+            max-width: calc(100vw - 40px);
+            z-index: 10000;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            transition: opacity 0.2s, visibility 0.2s;
+            pointer-events: none;
+        }
+
+        .tooltip-text strong {
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        .tooltip-wrapper:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-badge.connected {
+            background: rgba(118, 185, 0, 0.15);
+            color: var(--accent-color);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(107, 114, 128, 0.2);
+            color: var(--text-muted);
+        }
+
+        .status-badge.processing {
+            background: rgba(118, 185, 0, 0.15);
+            color: var(--accent-color);
+        }
+
+        /* Video Display */
+        .video-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        video {
+            width: 100%;
+            flex: 1;
+            min-height: 240px;
+            max-height: 100%;
+            display: block;
+            background: #000;
+            transition: transform 0.3s ease;
+            object-fit: contain;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Video Overlay Text */
+        .video-overlay {
+            position: absolute;
+            left: 0;
+            right: 0;
+            padding: 16px 20px;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.4));
+            color: white;
+            font-size: 16px;
+            line-height: 1.5;
+            pointer-events: none;
+            display: none;
+            z-index: 10;
+        }
+
+        .video-overlay.top {
+            top: 0;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.4));
+        }
+
+        .video-overlay.bottom {
+            bottom: 0;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.4));
+        }
+
+        .video-overlay.show {
+            display: block;
+        }
+
+        video.mirrored {
+            transform: scaleX(-1);
+        }
+
+        .video-controls {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+        }
+
+        .video-control-btn {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+            transition: all 0.2s;
+        }
+
+        .video-control-btn:hover {
+            background: rgba(0, 0, 0, 0.9);
+            border-color: var(--accent-color);
+        }
+
+        .video-control-btn.active {
+            background: var(--accent-color);
+            border-color: var(--accent-color);
+        }
+
+        /* Big Start Button (centered on video) */
+        .big-start-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(140px, 25vh);
+            height: min(140px, 25vh);
+            max-width: 80%;
+            max-height: 80%;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #76B900, #5a8f00);
+            border: none;
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(118, 185, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            z-index: 100;
+            opacity: 0.8;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+        }
+
+        .big-start-btn:hover:not(:disabled):not(.animating) {
+            transform: translate(-50%, -50%) scale(1.05);
+            box-shadow: 0 12px 32px rgba(118, 185, 0, 0.6);
+            opacity: 0.95;
+        }
+
+        .big-start-btn:active:not(:disabled):not(.animating) {
+            transform: translate(-50%, -50%) scale(0.95);
+        }
+
+        .big-start-btn:disabled {
+            opacity: 0.8;
+            cursor: wait;
+            transform: translate(-50%, -50%);
+        }
+
+        .big-start-btn i, .big-start-btn svg {
+            width: 56px !important;
+            height: 56px !important;
+            flex-shrink: 0;
+        }
+
+        /* Animation to top-left corner when streaming starts */
+        .big-start-btn.animating {
+            animation: moveToCorner 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            pointer-events: none;
+        }
+
+        @keyframes moveToCorner {
+            0% {
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 140px;
+                height: 140px;
+                border-radius: 16px;
+                background: linear-gradient(135deg, #76B900, #5a8f00);
+                font-size: 20px;
+                box-shadow: 0 8px 24px rgba(118, 185, 0, 0.5);
+            }
+            100% {
+                top: 16px;
+                left: 16px;
+                transform: translate(0, 0);
+                width: 48px;
+                height: 48px;
+                border-radius: 8px;
+                background: linear-gradient(135deg, #FFA726, #FF9800);
+                font-size: 0px;
+                box-shadow: 0 4px 12px rgba(255, 152, 0, 0.5);
+                opacity: 0;
+            }
+        }
+
+        /* Hide after animation */
+        .big-start-btn.streaming {
+            display: none;
+        }
+
+        /* Small Stop button (top-left corner when streaming) */
+        .small-stop-btn {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #EF5350, #D32F2F) !important;
+            border: none;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(239, 83, 80, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            z-index: 100;
+            opacity: 0.7;
+        }
+
+        .small-stop-btn.show {
+            display: flex;
+        }
+
+        .small-stop-btn:hover {
+            background: linear-gradient(135deg, #EF5350, #D32F2F) !important;
+            transform: scale(1.1);
+            opacity: 1 !important;
+        }
+
+        .small-stop-btn:active {
+            transform: scale(0.95);
+        }
+
+        .small-stop-btn i, .small-stop-btn svg {
+            width: 30px !important;
+            height: 30px !important;
+            flex-shrink: 0;
+        }
+
+        /* Fullscreen button (top-right corner) */
+        .fullscreen-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            z-index: 99;
+            opacity: 0.3;
+        }
+
+        .fullscreen-btn:hover {
+            background: rgba(0, 0, 0, 0.8);
+            border-color: var(--accent-color);
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
+
+        .fullscreen-btn svg, .fullscreen-btn i {
+            width: 20px !important;
+            height: 20px !important;
+        }
+
+        /* Fullscreen mode styles */
+        .video-card.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            z-index: 9999;
+            margin: 0;
+            border-radius: 0;
+            border: none;
+        }
+
+        .video-card.fullscreen video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .video-card.fullscreen .fullscreen-btn {
+            opacity: 0.7;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 101;
+        }
+
+        .video-card.fullscreen .fullscreen-btn:hover {
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        /* Keep controls above VLM overlay in fullscreen so shrink/mirror remain clickable */
+        .video-card.fullscreen .video-controls {
+            z-index: 101;
+        }
+
+        /* VLM Output overlay in fullscreen mode */
+        .fullscreen-vlm-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 24px;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.7), transparent);
+            color: white;
+            z-index: 100;
+            display: none;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        .video-card.fullscreen .fullscreen-vlm-overlay {
+            display: block;
+        }
+
+        .fullscreen-vlm-overlay .vlm-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent-color);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .fullscreen-vlm-overlay .vlm-content {
+            font-size: 18px;
+            line-height: 1.6;
+            font-weight: 500;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+        }
+
+        .fullscreen-vlm-overlay .vlm-metrics {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 8px;
+            display: flex;
+            gap: 16px;
+        }
+
+        /* Generation Result */
+        .result-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: opacity 0.3s ease, filter 0.3s ease;
+        }
+
+        .result-card.cloud-api {
+            opacity: 0.5;
+            filter: grayscale(0.3);
+        }
+
+        /* System Stats Card - Background Image */
+        #systemStatsCard {
+            position: relative;
+            overflow: hidden;
+        }
+
+        #systemStatsCard::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background-image: var(--system-bg-image, none);
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: bottom right 80px;
+            opacity: 0.08;
+            filter: blur(2px);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body.light-theme #systemStatsCard::before {
+            opacity: 0.05;
+        }
+
+        #systemStatsCard > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .api-preset-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .api-preset-item:hover {
+            background: var(--hover-bg);
+        }
+
+        .api-preset-item strong {
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+
+        .result-header-left {
+            flex: 1;
+        }
+
+        .result-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.3px;
+            margin-bottom: 6px;
+        }
+
+        .result-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .result-prompt {
+            font-size: 13px;
+            color: var(--text-primary);
+            margin-top: 16px;
+            margin-bottom: 12px;
+            margin-left: auto;
+            margin-right: 0;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px 16px 4px 16px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+
+        .result-text {
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            transition: opacity 3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+            min-height: 120px;
+            margin-top: 12px;
+            margin-left: 0;
+            margin-right: auto;
+            padding: 14px 18px;
+            background: linear-gradient(135deg, rgba(118, 185, 71, 0.15) 0%, rgba(147, 112, 219, 0.12) 100%);
+            border: 1px solid rgba(118, 185, 71, 0.3);
+            border-radius: 16px 16px 16px 4px;
+            max-width: 90%;
+            word-wrap: break-word;
+            position: relative; /* For absolute positioning of button */
+        }
+
+        .result-text-content {
+            /* Content wrapper - this is what gets updated, not the parent */
+            width: 100%;
+        }
+
+        /* Embedded markdown toggle button */
+        .markdown-toggle-embedded {
+            position: absolute;
+            top: -1px; /* Overlap balloon's top border */
+            right: -1px; /* Overlap balloon's right border */
+            background: var(--bg-secondary);
+            border-top: 1px solid rgba(118, 185, 71, 0.3);
+            border-right: 1px solid rgba(118, 185, 71, 0.3);
+            border-left: 1px solid rgba(118, 185, 71, 0.3);
+            border-bottom: 1px solid rgba(118, 185, 71, 0.3);
+            border-radius: 0 16px 0 0; /* Match top-right corner of balloon */
+            color: var(--text-secondary);
+            padding: 4px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+            z-index: 10;
+            line-height: 1.2;
+        }
+
+        .markdown-toggle-embedded:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .markdown-toggle-embedded .lucide {
+            width: 12px;
+            height: 12px;
+        }
+
+        /* Copy to clipboard button - overlay style in lower right */
+        .copy-button-embedded {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text-primary);
+            padding: 6px 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 10;
+            opacity: 0.4;
+        }
+
+        .copy-button-embedded:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: scale(1.05);
+        }
+
+        .copy-button-embedded:active {
+            transform: scale(0.95);
+        }
+
+        .copy-button-embedded .lucide {
+            width: 14px;
+            height: 14px;
+        }
+
+        .copy-button-embedded.copied {
+            background: rgba(118, 185, 0, 0.6);
+            border-color: rgba(118, 185, 0, 0.4);
+        }
+
+        .copy-button-embedded.copied .lucide {
+            animation: checkmark 0.3s ease;
+        }
+
+        @keyframes checkmark {
+            0% { transform: scale(0.8); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+
+        /* Markdown styling */
+        .result-text-content.markdown-rendered h1,
+        .result-text-content.markdown-rendered h2,
+        .result-text-content.markdown-rendered h3,
+        .result-text.markdown-rendered h1,
+        .result-text.markdown-rendered h2,
+        .result-text.markdown-rendered h3 {
+            color: var(--text-primary);
+            margin-top: 16px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .result-text-content.markdown-rendered h1,
+        .result-text.markdown-rendered h1 {
+            font-size: 1.5em;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+
+        .result-text-content.markdown-rendered h2,
+        .result-text.markdown-rendered h2 {
+            font-size: 1.3em;
+        }
+
+        .result-text-content.markdown-rendered h3,
+        .result-text.markdown-rendered h3 {
+            font-size: 1.1em;
+        }
+
+        .result-text-content.markdown-rendered p,
+        .result-text.markdown-rendered p {
+            margin: 8px 0;
+        }
+
+        .result-text-content.markdown-rendered ul,
+        .result-text-content.markdown-rendered ol,
+        .result-text.markdown-rendered ul,
+        .result-text.markdown-rendered ol {
+            margin: 8px 0;
+            padding-left: 24px;
+        }
+
+        .result-text-content.markdown-rendered li,
+        .result-text.markdown-rendered li {
+            margin: 4px 0;
+        }
+
+        .result-text-content.markdown-rendered code,
+        .result-text.markdown-rendered code {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 0.9em;
+            color: var(--accent-color);
+        }
+
+        .result-text-content.markdown-rendered pre,
+        .result-text.markdown-rendered pre {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            margin: 12px 0;
+        }
+
+        .result-text-content.markdown-rendered pre code,
+        .result-text.markdown-rendered pre code {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: var(--text-primary);
+            font-size: 0.85em;
+        }
+
+        .result-text-content.markdown-rendered blockquote,
+        .result-text.markdown-rendered blockquote {
+            border-left: 4px solid var(--accent-color);
+            padding-left: 16px;
+            margin: 12px 0;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .result-text-content.markdown-rendered table,
+        .result-text.markdown-rendered table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+            font-size: 0.9em;
+        }
+
+        .result-text-content.markdown-rendered table th,
+        .result-text-content.markdown-rendered table td,
+        .result-text.markdown-rendered table th,
+        .result-text.markdown-rendered table td {
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        .result-text-content.markdown-rendered table th,
+        .result-text.markdown-rendered table th {
+            background: var(--bg-tertiary);
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .result-text-content.markdown-rendered table tr:nth-child(even),
+        .result-text.markdown-rendered table tr:nth-child(even) {
+            background: var(--bg-secondary);
+        }
+
+        .result-text-content.markdown-rendered strong,
+        .result-text.markdown-rendered strong {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .result-text-content.markdown-rendered em,
+        .result-text.markdown-rendered em {
+            font-style: italic;
+        }
+
+        .result-text-content.markdown-rendered a,
+        .result-text.markdown-rendered a {
+            color: var(--accent-color);
+            text-decoration: none;
+        }
+
+        .result-text-content.markdown-rendered a:hover,
+        .result-text.markdown-rendered a:hover {
+            text-decoration: underline;
+        }
+
+        .result-text-content.markdown-rendered hr,
+        .result-text.markdown-rendered hr {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 16px 0;
+        }
+
+        .result-text.fade {
+            opacity: 0.4;
+        }
+
+        .result-text.new-message {
+            animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .result-text.new-message.with-glow {
+            animation: popInWithGlow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        @keyframes popIn {
+            0% {
+                transform: scale(0.95);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes popInWithGlow {
+            0% {
+                transform: scale(0.95);
+                opacity: 0.8;
+                box-shadow: 0 0 0 0 rgba(118, 185, 71, 0.4);
+            }
+            50% {
+                box-shadow: 0 0 20px 4px rgba(118, 185, 71, 0.6);
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+                box-shadow: 0 0 0 0 rgba(118, 185, 71, 0);
+            }
+        }
+
+        /* VLM Metrics */
+        .metrics-inline {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .metric-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: var(--accent-color);
+        }
+
+        /* System Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 0.3px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+
+        .stat-value-denominator {
+            font-size: 14px;
+            font-weight: 600;
+            opacity: 0.85;
+        }
+
+        .stat-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .stat-bar-fill {
+            height: 100%;
+            background: var(--accent-color);
+            transition: width 0.3s ease;
+        }
+
+        .stat-bar-fill.high {
+            background: var(--warning-color);
+        }
+
+        .sparkline {
+            width: 100%;
+            height: 40px;
+        }
+
+        /* Info Box */
+        .info-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+
+        .info-box h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .info-box ul {
+            list-style-position: inside;
+            padding-left: 0;
+        }
+
+        .info-box li {
+            margin-bottom: 6px;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-color);
+        }
+
+        /* Lucide icon styling */
+        .lucide {
+            width: 1em;
+            height: 1em;
+            vertical-align: middle;
+        }
+
+        .logo .lucide,
+        .logo svg {
+            width: 42px;
+            height: 42px;
+            filter: drop-shadow(0 0 8px var(--accent-color));
+        }
+
+        /* Logo color - theme-aware (subtle glow on light background) */
+        body.light-theme .logo .lucide,
+        body.light-theme .logo svg {
+            filter: drop-shadow(0 0 3px rgba(94, 148, 0, 0.3));
+        }
+
+        .icon-btn .lucide,
+        .settings-btn .lucide,
+        .video-control-btn .lucide {
+            width: 16px;
+            height: 16px;
+        }
+
+        .panel-icon .lucide {
+            width: 18px;
+            height: 18px;
+        }
+
+        .result-title .lucide {
+            width: 20px;
+            height: 20px;
+            margin-right: 6px;
+        }
+
+        /* Default: Neutral icon colors (clean two-tone system) */
+        .panel-icon svg,
+        .panel-icon .lucide,
+        .result-title svg,
+        .result-title .lucide {
+            stroke: var(--text-secondary) !important;
+        }
+
+        /* Colorful icon strokes (only when enabled) - Dark theme */
+        body.colorful-focus .panel-icon:has([data-lucide="globe"]) svg,
+        body.colorful-focus .panel-icon:has([data-lucide="globe"]) .lucide {
+            stroke: rgb(34, 211, 238) !important; /* Softer cyan */
+        }
+
+        body.colorful-focus .panel-icon:has([data-lucide="video"]) svg,
+        body.colorful-focus .panel-icon:has([data-lucide="video"]) .lucide {
+            stroke: rgb(59, 130, 246) !important; /* Blue */
+        }
+
+        body.colorful-focus .panel-icon:has([data-lucide="edit-3"]) svg,
+        body.colorful-focus .panel-icon:has([data-lucide="edit-3"]) .lucide {
+            stroke: rgb(251, 191, 36) !important; /* Yellow/Orange */
+        }
+
+        body.colorful-focus .result-title:has([data-lucide="bot"]) svg,
+        body.colorful-focus .result-title:has([data-lucide="bot"]) .lucide {
+            stroke: rgb(168, 85, 247) !important; /* Purple */
+        }
+
+        body.colorful-focus #systemStatsCard .result-title:has([data-lucide="activity"]) svg,
+        body.colorful-focus #systemStatsCard .result-title:has([data-lucide="activity"]) .lucide {
+            stroke: rgb(118, 185, 0) !important; /* NVIDIA Green */
+        }
+
+        /* Colorful icon strokes - Light theme (darker variants) */
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="globe"]) svg,
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="globe"]) .lucide {
+            stroke: rgb(6, 182, 212) !important; /* Darker cyan */
+        }
+
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="video"]) svg,
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="video"]) .lucide {
+            stroke: rgb(37, 99, 235) !important; /* Darker blue */
+        }
+
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="edit-3"]) svg,
+        body.light-theme.colorful-focus .panel-icon:has([data-lucide="edit-3"]) .lucide {
+            stroke: rgb(217, 119, 6) !important; /* Darker orange */
+        }
+
+        body.light-theme.colorful-focus .result-title:has([data-lucide="bot"]) svg,
+        body.light-theme.colorful-focus .result-title:has([data-lucide="bot"]) .lucide {
+            stroke: rgb(126, 34, 206) !important; /* Darker purple */
+        }
+
+        body.light-theme.colorful-focus #systemStatsCard .result-title:has([data-lucide="activity"]) svg,
+        body.light-theme.colorful-focus #systemStatsCard .result-title:has([data-lucide="activity"]) .lucide {
+            stroke: rgb(94, 148, 0) !important; /* Darker NVIDIA green */
+        }
+
+        /* Settings icon - theme-aware */
+        .settings-btn .lucide {
+            stroke: rgb(200, 200, 200);
+        }
+        body.light-theme .settings-btn .lucide {
+            stroke: rgb(100, 100, 100); /* Darker gray for light mode */
+        }
+
+        /* Theme toggle icons - Yellow/Gold */
+        #themeIcon .lucide {
+            stroke: rgb(247, 224, 166); /* Bright gold for dark mode (moon) */
+        }
+        body.light-theme #themeIcon .lucide {
+            stroke: rgb(223, 168, 4); /* Darker gold for light mode (sun) */
+        }
+
+        /* Video control buttons - Teal */
+        .video-control-btn .lucide {
+            stroke: rgb(20, 184, 166);
+        }
+        body.light-theme .video-control-btn .lucide {
+            stroke: rgb(13, 148, 136); /* Darker teal for light mode */
+        }
+
+        /* Action button icons (play, stop) - White for contrast on green button */
+        .btn-primary .lucide {
+            stroke: white !important;
+        }
+        body.light-theme .btn-primary .lucide {
+            stroke: white !important;
+        }
+
+        .btn-secondary .lucide {
+            stroke: var(--text-primary) !important;
+        }
+
+        /* Input fields - Focus and Apply animations */
+        #promptText,
+        #maxTokens,
+        #thinkingMode,
+        #processEvery,
+        #apiBaseUrl,
+        #apiKey,
+        #modelSelect,
+        #cameraSelect,
+        #rtspUrl {
+            transition: all 0.3s ease;
+        }
+
+        /* Default: Neutral white focus glow (when colorful is disabled) */
+        #promptText:focus,
+        #maxTokens:focus,
+        #thinkingMode:focus,
+        #processEvery:focus,
+        #cameraSelect:focus,
+        #apiBaseUrl:focus,
+        #apiKey:focus,
+        #modelSelect:focus,
+        #rtspUrl:focus {
+            border-color: rgba(200, 200, 200, 0.6) !important;
+            box-shadow: 0 0 0 2px rgba(200, 200, 200, 0.15),
+                        0 0 8px rgba(200, 200, 200, 0.2) !important;
+            outline: none;
+        }
+
+        /* Colorful focus glows (only when enabled) */
+        body.colorful-focus #promptText:focus,
+        body.colorful-focus #maxTokens:focus {
+            border-color: rgb(251, 191, 36) !important;
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.3),
+                        0 0 12px rgba(251, 191, 36, 0.4) !important;
+        }
+
+        body.colorful-focus #processEvery:focus,
+        body.colorful-focus #cameraSelect:focus,
+        body.colorful-focus #rtspUrl:focus {
+            border-color: rgb(59, 130, 246) !important;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3),
+                        0 0 12px rgba(59, 130, 246, 0.4) !important;
+        }
+
+        body.colorful-focus #apiBaseUrl:focus,
+        body.colorful-focus #apiKey:focus,
+        body.colorful-focus #modelSelect:focus {
+            border-color: rgb(34, 211, 238) !important;
+            box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.25),
+                        0 0 12px rgba(34, 211, 238, 0.3) !important;
+        }
+
+        /* Bright flash animation when applied (on blur) */
+        @keyframes settingApplied {
+            0% {
+                box-shadow: 0 0 0 0 rgba(118, 185, 0, 0.7),
+                           0 0 20px rgba(118, 185, 0, 0.8);
+            }
+            50% {
+                box-shadow: 0 0 0 6px rgba(118, 185, 0, 0.3),
+                           0 0 30px rgba(118, 185, 0, 0.6);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(118, 185, 0, 0),
+                           0 0 0 rgba(118, 185, 0, 0);
+            }
+        }
+
+        #promptText.applied,
+        #maxTokens.applied,
+        #thinkingMode.applied,
+        #processEvery.applied,
+        #apiBaseUrl.applied,
+        #apiKey.applied,
+        #modelSelect.applied,
+        #cameraSelect.applied,
+        #rtspUrl.applied {
+            animation: settingApplied 0.6s ease-out;
+        }
+
+
+        /* ===== GRADIENT STROKES (Optional - gradients may not work reliably with Lucide) ===== */
+        /*
+        .panel-icon [data-lucide="globe"] svg {
+            stroke: url(#gradient-cyan) !important;
+        }
+
+        .panel-icon [data-lucide="video"] svg {
+            stroke: url(#gradient-blue) !important;
+        }
+
+        .panel-icon [data-lucide="edit-3"] svg {
+            stroke: url(#gradient-orange) !important;
+        }
+
+        .result-title [data-lucide="bot"] svg {
+            stroke: url(#gradient-purple) !important;
+        }
+
+        #systemStatsCard .result-title [data-lucide="activity"] svg {
+            stroke: url(#gradient-green) !important;
+        }
+        */
+
+        /* Responsive Layout - Side by Side on Wide Screens */
+        @media (min-width: 1400px) {
+            .main-content {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: minmax(0, 1fr) auto;
+                gap: 20px;
+                align-items: start;
+                max-height: calc(100vh - 100px);
+            }
+
+            /* Video card in left column */
+            .video-card {
+                grid-column: 1;
+                grid-row: 1;
+                margin-bottom: 0;
+                align-self: stretch;
+                max-height: 100%;
+            }
+
+            /* VLM Output card in right column */
+            .result-card:not(#systemStatsCard) {
+                grid-column: 2;
+                grid-row: 1;
+                margin-bottom: 0;
+                max-height: 100%;
+                overflow-y: auto;
+                align-self: stretch;
+            }
+
+            /* System Stats card spans full width at bottom */
+            #systemStatsCard {
+                grid-column: 1 / -1;
+                grid-row: 2;
+                margin-bottom: 0;
+            }
+        }
+
+        @media (min-width: 1600px) {
+            .main-content {
+                grid-template-columns: 1.2fr 1fr;
+            }
+        }
+
+        /* Responsive adjustments for smaller screens */
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 280px;
+            }
+
+            .header-title {
+                font-size: 18px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 12px;
+            }
+
+            .video-card {
+                border-radius: 8px;
+            }
+
+            .result-card {
+                border-radius: 8px;
+                padding: 16px;
+            }
+
+            .big-start-btn {
+                width: min(100px, 20vh);
+                height: min(100px, 20vh);
+                font-size: 16px;
+            }
+
+            .big-start-btn i, .big-start-btn svg {
+                width: min(40px, 8vh) !important;
+                height: min(40px, 8vh) !important;
+            }
+        }
+
+    </style>
+
+    <!-- SVG Gradient Definitions (for gradient strokes) -->
+    <svg width="0" height="0" style="position: absolute;">
+        <defs>
+            <!-- Cyan gradient -->
+            <linearGradient id="gradient-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:rgb(34, 211, 238);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:rgb(6, 182, 212);stop-opacity:1" />
+            </linearGradient>
+
+            <!-- Blue gradient -->
+            <linearGradient id="gradient-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:rgb(96, 165, 250);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:rgb(59, 130, 246);stop-opacity:1" />
+            </linearGradient>
+
+            <!-- Orange/Yellow gradient -->
+            <linearGradient id="gradient-orange" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:rgb(251, 191, 36);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:rgb(245, 158, 11);stop-opacity:1" />
+            </linearGradient>
+
+            <!-- Purple gradient -->
+            <linearGradient id="gradient-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:rgb(192, 132, 252);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:rgb(168, 85, 247);stop-opacity:1" />
+            </linearGradient>
+
+            <!-- NVIDIA Green gradient -->
+            <linearGradient id="gradient-green" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:rgb(139, 201, 25);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:rgb(118, 185, 0);stop-opacity:1" />
+            </linearGradient>
+        </defs>
+    </svg>
+
+    <!-- Lucide Icons - Load before body scripts -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Markdown rendering libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    <script>
+        // Keep the local demo usable when the optional icon CDN is unavailable.
+        window.lucide = window.lucide || { createIcons() {} };
+        // Initialize Lucide icons immediately when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+        } else {
+            lucide.createIcons();
+        }
+    </script>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <div class="logo">
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     width="42"
+                     height="42"
+                     viewBox="0 0 1024 1024"
+                     fill="none"
+                     style="color: var(--accent-color);">
+                    <!-- All parts become accent color (NVIDIA green) -->
+                    <path fill="currentColor" d="M1024 727.183 511.134 1024 0 729.493V601.5l511.134 296L1024 601.5z"/>
+
+                    <path fill="currentColor" d="M968.916 53.23c20.567-11.874 37.244-2.248 37.244 21.5v452.571c0 23.748-16.678 52.625-37.244 64.5L568.653 822.893c-20.566 11.874-37.239 2.248-37.239-21.5V348.821c0-23.748 16.673-52.626 37.239-64.5zM592 407.121v304.172c0 18.777 13.183 26.389 29.445 17l303.11-175.001c16.262-9.389 29.445-32.222 29.445-51V198.12zm35-89.894c0-15.037-10.745-21.023-24-13.371-13.255 7.653-24 26.046-24 41.083s10.745 21.024 24 13.371c13.255-7.652 24-26.046 24-41.083M427.702 479.5v337L25 584V247zM216.603 440C168.773 412.386 130 434.772 130 490s38.773 122.386 86.603 150 86.602 5.228 86.602-50-38.773-122.386-86.602-150m146.855 44.544c-12.955-7.48-23.458-1.417-23.458 13.543s10.503 33.151 23.458 40.631 23.458 1.415 23.458-13.544c0-14.96-10.503-33.15-23.458-40.63"/>
+
+                    <path fill="currentColor" d="m455.5 464-403-233.5 38.5-21 404.5 232V778l-40 24.5zM501.5 363.5v40L128.644 191.366 166 169.799zM513.5 298c-6.5 9-9 15.5-12 25.5L198 153l31-17zM931 519.064 715 643.772v-88.949l20.784-11.999v64.948l174.431-100.708v-64.967c8.419-5.181 15.888-14.149 20.785-24.097zM895.288 276.814c15.305-8.836 27.713-1.673 27.713 16v80c0 17.673-12.408 39.164-27.713 48L654.713 559.71c-15.306 8.837-27.713 1.674-27.713-16v-80c0-17.673 12.407-39.163 27.713-48zM663.882 457.792v31.943l158.18-91.325v-31.943z"/>
+                </svg>
+            </div>
+            <div class="title-section">
+                <h1>Live VLM WebUI</h1>
+                <div class="subtitle">Real-time Vision Language Model Benchmark/Evaluation Tool</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <span class="status-badge disconnected" id="connectionStatus">Disconnected</span>
+            <button class="settings-btn" id="settingsBtn" title="Settings">
+                <i data-lucide="settings"></i>
+            </button>
+            <button class="theme-toggle" id="themeToggle">
+                <span id="themeIcon">
+                    <i data-lucide="moon"></i>
+                </span>
+                <span id="themeText">Dark</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="settings-modal" id="settingsModal">
+        <div class="settings-dialog">
+            <div class="settings-header">
+                <div class="settings-title">
+                    <i data-lucide="settings"></i> Settings
+                </div>
+                <button class="settings-close" id="settingsClose">×</button>
+            </div>
+            <div class="settings-body">
+                <!-- Column 1: Layout & Visual Effects -->
+                <div>
+                    <div class="settings-section">
+                        <div class="settings-section-title">Layout</div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Main Content Order</div>
+                                <div class="settings-item-description">Choose which element appears at the top</div>
+                            </div>
+                            <select id="layoutOrder" class="settings-select">
+                                <option value="video-first">Camera → VLM Output Info</option>
+                                <option value="vlm-first" selected>VLM Output Info → Camera</option>
+                            </select>
+                        </div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">VLM Output on Camera View</div>
+                                <div class="settings-item-description">Show text overlay directly on video feed</div>
+                            </div>
+                            <select id="overlayPosition" class="settings-select">
+                                <option value="none">None</option>
+                                <option value="top">At the top</option>
+                                <option value="bottom">At the bottom</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">Visual Effects</div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Pop-in Animation</div>
+                                <div class="settings-item-description">Scale animation when new VLM response arrives</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="popInToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Green Glow Effect</div>
+                                <div class="settings-item-description">Border glow on new VLM response</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="glowToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Fade Effect</div>
+                                <div class="settings-item-description">Gradually fade response after 2 seconds</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="fadeToggle" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Input Colors & WebRTC -->
+                <div>
+                    <div class="settings-section">
+                        <div class="settings-section-title">Visual Style</div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Colorful UI Accents</div>
+                                <div class="settings-item-description">Color-coded icons and input focus glows</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="colorfulFocusToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">WebRTC</div>
+
+                        <div class="settings-item">
+                            <div style="flex: 1; min-width: 0;">
+                                <div class="settings-item-label">Max Video Latency (seconds)</div>
+                                <div class="settings-item-description">Drop old frames if delay exceeds this (0 = no intervention)</div>
+                            </div>
+                            <input type="number" id="maxLatency" value="0" min="0" max="10.0" step="0.1" style="width: 80px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 14px;">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">GPU Monitoring</div>
+
+                        <div class="settings-item">
+                            <div style="flex: 1; min-width: 0;">
+                                <div class="settings-item-label">Graph Update Interval (seconds)</div>
+                                <div class="settings-item-description">How often to update GPU/CPU graphs (lower = more responsive, higher = less CPU usage)</div>
+                            </div>
+                            <input type="number" id="gpuUpdateInterval" value="0.25" min="0.1" max="5.0" step="0.05" style="width: 80px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 14px;">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">Debug</div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Show request payload</div>
+                                <div class="settings-item-description">Include request JSON (image + prompt) under the prompt area; collapsed by default</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="debugShowRequestPayload">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Show response payload</div>
+                                <div class="settings-item-description">Include API response JSON under the VLM output; collapsed by default</div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="debugShowResponsePayload">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <!-- VLM API Configuration -->
+            <div class="panel">
+                <div class="panel-header" onclick="togglePanel('vlmConfig')">
+                    <div class="panel-title">
+                        <span class="panel-icon">
+                            <i data-lucide="globe"></i>
+                        </span>
+                        VLM API Configuration
+                    </div>
+                    <span class="panel-toggle" id="vlmConfigToggle">▼</span>
+                </div>
+                <div class="panel-content" id="vlmConfig">
+                    <div class="form-group">
+                        <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 8px;">
+                            <label style="margin-bottom: 0; flex: 1;">API Base URL</label>
+                            <div style="position: relative;">
+                                <button class="icon-btn" id="apiPresetsBtn" title="Select preset API endpoint">
+                                    <i data-lucide="clipboard"></i>
+                                </button>
+                                <div id="apiPresetsMenu" style="display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); min-width: 280px; z-index: 9999;">
+                                    <div style="padding: 8px 0;">
+                                        <div class="api-preset-item" data-url="http://localhost:11434/v1">
+                                            <strong>Ollama</strong><br>
+                                            <span style="font-size: 11px; color: var(--text-muted);">http://localhost:11434/v1</span>
+                                        </div>
+                                        <div class="api-preset-item" data-url="http://localhost:8000/v1">
+                                            <strong>vLLM</strong><br>
+                                            <span style="font-size: 11px; color: var(--text-muted);">http://localhost:8000/v1</span>
+                                        </div>
+                                        <div class="api-preset-item" data-url="http://localhost:30000/v1">
+                                            <strong>SGLang</strong><br>
+                                            <span style="font-size: 11px; color: var(--text-muted);">http://localhost:30000/v1</span>
+                                        </div>
+                                        <div style="border-top: 1px solid var(--border-color); margin: 4px 0;"></div>
+                                        <div class="api-preset-item" data-url="https://api.openai.com/v1">
+                                            <strong>OpenAI</strong><br>
+                                            <span style="font-size: 11px; color: var(--text-muted);">https://api.openai.com/v1</span>
+                                        </div>
+                                        <div class="api-preset-item" data-url="https://integrate.api.nvidia.com/v1">
+                                            <strong>NVIDIA API Catalog</strong><br>
+                                            <span style="font-size: 11px; color: var(--text-muted);">https://integrate.api.nvidia.com/v1</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="text" id="apiBaseUrl" value="http://localhost:11434/v1" placeholder="http://localhost:8000/v1">
+                        <div class="input-hint" id="apiBaseHint">Select from presets or enter custom URL</div>
+                    </div>
+                    <div class="form-group" id="apiKeyGroup">
+                        <div style="display: flex; align-items: center; cursor: pointer; margin-bottom: 8px;" onclick="toggleApiKeyField()">
+                            <label style="margin-bottom: 0; flex: 1;">API Key (Optional)</label>
+                            <span id="apiKeyToggle" style="font-size: 12px; color: var(--text-secondary);">▼</span>
+                        </div>
+                        <div id="apiKeyField">
+                            <input type="text" id="apiKey" placeholder="sk-..." autocomplete="off">
+                            <div class="input-hint">Required for OpenAI and NVIDIA API Catalog, etc.</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <label style="margin-bottom: 0;">Model Selection</label>
+                            <div style="display: flex; gap: 6px;">
+                                <button class="icon-btn" id="refreshModelsBtn" title="Refresh available models">
+                                    <i data-lucide="refresh-cw"></i>
+                                </button>
+                                <button class="icon-btn" id="downloadModelBtn" title="Download new model (coming soon)" disabled style="opacity: 0.5;">
+                                    <i data-lucide="plus"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <select id="modelSelect">
+                            <option value="">Loading models...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Video Source -->
+            <div class="panel">
+                <div class="panel-header" onclick="togglePanel('cameraConfig')">
+                    <div class="panel-title">
+                        <span class="panel-icon">
+                            <i data-lucide="video"></i>
+                        </span>
+                        Video Source
+                    </div>
+                    <span class="panel-toggle" id="cameraConfigToggle">▼</span>
+                </div>
+                <div class="panel-content" id="cameraConfig">
+                    <!-- Input Source Tabs -->
+                    <div class="input-source-tabs">
+                        <button class="input-source-tab active" data-source="webcam">
+                            <i data-lucide="video" style="width: 14px; height: 14px; margin-right: 4px;"></i>
+                            Webcam
+                        </button>
+                        <button class="input-source-tab" data-source="rtsp" title="RTSP IP Camera (Beta - Tested with Reolink RLC-811A)">
+                            <i data-lucide="cast" style="width: 14px; height: 14px; margin-right: 4px;"></i>
+                            RTSP Stream
+                            <span class="beta-badge">BETA</span>
+                        </button>
+                    </div>
+
+                    <!-- Webcam Controls -->
+                    <div id="webcamControls">
+                        <div class="form-group">
+                            <label>Camera Selection</label>
+                            <select id="cameraSelect">
+                                <option value="">Detecting cameras...</option>
+                            </select>
+                            <div class="input-hint" style="margin-bottom: 11px;">Select camera device to use for VLM analysis</div>
+                        </div>
+                    </div>
+
+                    <!-- RTSP Controls -->
+                    <div id="rtspControls" style="display: none;">
+                        <div class="form-group">
+                            <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 8px;">
+                                <div class="tooltip-wrapper" style="margin-bottom: 0; flex: 1;">
+                                    <label style="margin-bottom: 0;">RTSP Stream URL</label>
+                                    <span class="tooltip-icon">ℹ</span>
+                                    <div class="tooltip-text">
+                                        <strong>Format:</strong> rtsp://[user:pass@]ip:port/path<br><br>
+                                        <strong>Examples:</strong><br>
+                                        • rtsp://192.168.1.100:554/stream<br>
+                                        • rtsp://admin:password@192.168.1.100:554/h264Preview_01_main
+                                    </div>
+                                </div>
+                                <button class="icon-btn" id="testRtspBtn" title="Test Connection">
+                                    <i data-lucide="test-tube-diagonal"></i>
+                                </button>
+                            </div>
+                            <input type="text" id="rtspUrl" placeholder="rtsp://192.168.1.100:554/stream" style="margin-bottom: 16px;">
+                            <div id="rtspStatus" class="input-hint" style="margin-top: -8px; margin-bottom: 12px; display: none;"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <!-- RTSP Beta Warning (shown only when RTSP tab is active) -->
+                        <div id="rtspBetaWarning" class="input-hint" style="margin-top: 12px; color: var(--warning-color); display: none; align-items: center; gap: 4px;">
+                            <span><strong>Beta:</strong> Tested with Reolink RLC-811A. Other cameras may work. <a href="https://github.com/NVIDIA-AI-IOT/live-vlm-webui/blob/main/docs/usage/rtsp-ip-cameras.md" target="_blank" style="color: var(--warning-color); text-decoration: underline;">Learn more</a></span>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label>Frame Processing Interval</label>
+                        <input type="number" id="processEvery" value="30" min="1" max="3600" step="1">
+                        <div class="input-hint">Process every Nth frame (Lower = more frequent)</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prompt Editor -->
+            <div class="panel">
+                <div class="panel-header" onclick="togglePanel('promptEditor')">
+                    <div class="panel-title">
+                        <span class="panel-icon">
+                            <i data-lucide="edit-3"></i>
+                        </span>
+                        Prompt Editor
+                    </div>
+                    <span class="panel-toggle" id="promptEditorToggle">▼</span>
+                </div>
+                <div class="panel-content" id="promptEditor">
+                    <div class="form-group">
+                        <label>Quick Presets</label>
+                        <select id="promptPreset">
+                            <option value="">-- Select a preset --</option>
+                            <option value="Describe what you see in this image in one sentence.">Scene Description</option>
+                            <option value="List all objects you can see in this image, separated by commas.">Object Detection</option>
+                            <option value="Describe the person's activity and what they are doing.">Activity Recognition</option>
+                            <option value="Are there any safety hazards visible? Answer with 'ALERT: description' or 'SAFE'.">Safety Monitoring</option>
+                            <option value="Describe the facial expressions and emotions of people visible.">Emotion Detection</option>
+                            <option value="Provide a detailed description of the scene for a visually impaired person.">Accessibility</option>
+                            <option value="Read and transcribe any text visible in the image.">OCR / Text Reading</option>
+                            <option value="Answer with Yes or No only: Is there a person visible?">Yes/No Question</option>
+                            <option value="You are a robot. Describe what you see, then give 5 navigation commands to get to a possible location of a bathroom. Format: 'linear_x=0.3, angular_z=0.0 # reason'. Keep linear_x between -0.5 and 0.5, angular_z between -1.0 and 1.0.">🤖 Robot Navigation (Simple)</option>
+                            <option value="You are controlling a mobile robot with differential drive. Camera: 1.0m height, forward-facing. Generate ROS cmd_vel commands based on what you see to get to a possible location of a bathroom.
+
+CRITICAL CONSTRAINTS:
+- linear.x: MUST be between -0.5 and +0.5 m/s (violations will cause robot damage)
+- angular.z: MUST be between -1.0 and +1.0 rad/s
+- Commands must respond to actual obstacles/scene content
+
+OUTPUT FORMAT (20 commands for 2.0 seconds):
+T=0.0s: linear.x=0.20, angular.z=0.00 # [explain what you see and why this velocity]
+T=0.1s: linear.x=0.18, angular.z=-0.15 # [explain decision based on scene]
+... (continue for all 20 timesteps)
+
+STRATEGY SECTION:
+After commands, explain: obstacles detected, clearance margins, goal inference, safety considerations.">🤖 Robot Navigation (ROS)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Custom Prompt</label>
+                        <textarea id="promptText" placeholder="Enter your custom prompt here...">Describe what you see in this image in one sentence.</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Max Tokens</label>
+                        <input type="number" id="maxTokens" value="512" min="1" max="4096" step="1">
+                        <div class="input-hint">Lower for short answers (Yes/No: ~10), higher for detailed descriptions</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="thinkingMode">Thinking</label>
+                        <select id="thinkingMode" disabled>
+                            <option value="">Model default</option>
+                            <option value="none">Off</option>
+                            <option value="low">On — Low</option>
+                            <option value="medium">On — Medium</option>
+                            <option value="high">On — High</option>
+                        </select>
+                        <div class="input-hint">Requires model and API support. Applies to the next request. Thinking On may need more Max Tokens.</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Video Feed -->
+            <div class="video-card" id="videoCard">
+                <!-- Big Start Button (centered overlay) -->
+                <button id="bigStartBtn" class="big-start-btn" onclick="start()">
+                    <i data-lucide="play"></i>
+                    Start
+                </button>
+
+                <!-- Small Stop Button (top-left corner when streaming) -->
+                <button id="smallStopBtn" class="small-stop-btn" onclick="stop()">
+                    <i data-lucide="square"></i>
+                </button>
+
+                <!-- Fullscreen Button (top-right corner) -->
+                <button class="fullscreen-btn" onclick="toggleFullscreen()" title="Toggle fullscreen">
+                    <i data-lucide="maximize" id="fullscreenIcon"></i>
+                </button>
+
+                <!-- VLM Output Overlay (shown in fullscreen mode) -->
+                <div class="fullscreen-vlm-overlay" id="fullscreenVlmOverlay">
+                    <div class="vlm-title">
+                        <i data-lucide="bot"></i>
+                        VLM Output
+                    </div>
+                    <div class="vlm-content" id="fullscreenVlmContent">Ready</div>
+                    <div class="vlm-metrics" id="fullscreenVlmMetrics"></div>
+                </div>
+
+                <!-- Legacy controls (kept for mirror functionality) -->
+                <div class="video-controls" style="top: 64px;">
+                    <button class="video-control-btn" id="mirrorBtn" title="Mirror video">
+                        <i data-lucide="flip-horizontal"></i> Mirror
+                    </button>
+                </div>
+
+                <video id="videoElement" autoplay playsinline muted></video>
+                <div class="video-overlay" id="videoOverlay"></div>
+            </div>
+
+            <!-- Generation Result -->
+            <div class="result-card">
+                <div class="result-header">
+                    <div class="result-header-left">
+                        <div class="result-title">
+                            <i data-lucide="bot"></i> VLM Output Info
+                        </div>
+                        <div class="result-subtitle">
+                            Model: <span id="modelName" style="font-weight: 600; color: var(--accent-color);">--</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 16px;">
+                        <div class="metrics-inline" id="metricsInline" style="display: none;">
+                            <div class="metric-item">
+                                <span>Latency:</span>
+                                <span class="metric-value" id="latencyValue">--</span>
+                                <span>ms</span>
+                            </div>
+                            <div class="metric-item">
+                                <span>Avg:</span>
+                                <span class="metric-value" id="avgLatencyValue">--</span>
+                                <span>ms</span>
+                            </div>
+                            <div class="metric-item">
+                                <span>Count:</span>
+                                <span class="metric-value" id="countValue">--</span>
+                            </div>
+                        </div>
+                    </div>
+            </div>
+
+                <div class="result-prompt" id="currentPrompt"></div>
+                <div id="requestPayloadDebug" class="debug-payload-block" style="display: none; margin-top: 8px;">
+                    <details style="margin: 0;">
+                        <summary style="cursor: pointer; font-size: 12px; color: var(--text-secondary);">Request payload (debug)</summary>
+                        <pre id="requestPayloadContent" style="margin: 8px 0 0; padding: 10px; background: var(--bg-secondary); border-radius: 8px; font-size: 11px; overflow: auto; max-height: 240px; white-space: pre-wrap; word-break: break-all;"></pre>
+                    </details>
+                </div>
+                <div class="result-text" id="resultText">
+                    <button class="markdown-toggle-embedded" id="markdownToggle" title="Toggle Markdown Rendering">
+                        <span id="markdownIcon"><i data-lucide="code"></i></span>
+                        <span id="markdownText">Markdown</span>
+                    </button>
+                    <button class="copy-button-embedded" id="copyButton" title="Copy to clipboard">
+                        <i data-lucide="copy"></i>
+                    </button>
+                    <div class="result-text-content" id="resultTextContent"></div>
+                </div>
+                <div id="responsePayloadDebug" class="debug-payload-block" style="display: none; margin-top: 8px;">
+                    <details style="margin: 0;">
+                        <summary style="cursor: pointer; font-size: 12px; color: var(--text-secondary);">Response payload (debug)</summary>
+                        <pre id="responsePayloadContent" style="margin: 8px 0 0; padding: 10px; background: var(--bg-secondary); border-radius: 8px; font-size: 11px; overflow: auto; max-height: 240px; white-space: pre-wrap; word-break: break-all;"></pre>
+                    </details>
+                </div>
+            </div>
+
+            <!-- System Stats -->
+            <div class="result-card" id="systemStatsCard">
+                <div class="result-header" style="display: flex; justify-content: space-between; align-items: center; gap: 20px;">
+                    <div class="result-title">
+                        <i data-lucide="activity"></i> Local System Stats
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-secondary); text-align: right; font-weight: 400; flex-shrink: 1; min-width: 0;">
+                        <span id="systemInfoHeader" style="flex: 1;">Loading...</span>
+                        <img id="systemProductImage"
+                             src=""
+                             alt="System"
+                             style="width: 48px; height: 48px; object-fit: contain; display: none;"
+                             onerror="this.style.display='none';">
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">GPU Utilization</span>
+                            <span class="stat-value" id="gpuUtil">--%</span>
+                        </div>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill" id="gpuUtilBar" style="width: 0%"></div>
+                        </div>
+                        <canvas id="gpuUtilSparkline" class="sparkline"></canvas>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">VRAM Usage</span>
+                            <span class="stat-value" id="vramUsage">-- GB</span>
+                        </div>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill" id="vramBar" style="width: 0%"></div>
+                        </div>
+                        <canvas id="vramSparkline" class="sparkline"></canvas>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">CPU Utilization</span>
+                            <span class="stat-value" id="cpuUtil">--%</span>
+                        </div>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill" id="cpuBar" style="width: 0%"></div>
+                        </div>
+                        <canvas id="cpuSparkline" class="sparkline"></canvas>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-label">System RAM</span>
+                            <span class="stat-value" id="ramUsage">-- GB</span>
+                        </div>
+                        <div class="stat-bar">
+                            <div class="stat-bar-fill" id="ramBar" style="width: 0%"></div>
+                        </div>
+                        <canvas id="ramSparkline" class="sparkline"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Elements
+        const themeToggle = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        const themeText = document.getElementById('themeText');
+        const videoElement = document.getElementById('videoElement');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const resultText = document.getElementById('resultText');
+        const currentPrompt = document.getElementById('currentPrompt');
+        const metricsInline = document.getElementById('metricsInline');
+        const markdownToggle = document.getElementById('markdownToggle');
+        const markdownIcon = document.getElementById('markdownIcon');
+        const markdownText = document.getElementById('markdownText');
+        const copyButton = document.getElementById('copyButton');
+        const latencyValue = document.getElementById('latencyValue');
+        const avgLatencyValue = document.getElementById('avgLatencyValue');
+        const countValue = document.getElementById('countValue');
+        const promptPreset = document.getElementById('promptPreset');
+        const promptText = document.getElementById('promptText');
+        const maxTokens = document.getElementById('maxTokens');
+        const thinkingMode = document.getElementById('thinkingMode');
+        const modelSelect = document.getElementById('modelSelect');
+        const refreshModelsBtn = document.getElementById('refreshModelsBtn');
+        const processEvery = document.getElementById('processEvery');
+        const maxLatency = document.getElementById('maxLatency');
+        const mirrorBtn = document.getElementById('mirrorBtn');
+
+        let peerConnection = null;
+        let localStream = null;
+        let websocket = null;
+        let fadeTimeout = null;
+        let lastText = '';
+        // Multi-session: one ID per page/tab; sent in WebSocket and /offer so this tab gets only its VLM output
+        const sessionId = crypto.randomUUID ? crypto.randomUUID() : 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        let isAnalysisRunning = false;
+        let isStarting = false;
+        // Explicit opt-in for an attended demo station with camera permission configured.
+        const autoStart = new URLSearchParams(window.location.search).get('autostart') === '1';
+        let autoStartPending = autoStart;
+        let selectedCameraId = null;
+        let rtspSessionId = 'default';  // For RTSP mode
+        // Enable markdown by default (user can disable if they prefer raw text)
+        let markdownEnabled = localStorage.getItem('markdownEnabled') !== 'false';
+
+        // Enumerate and list available cameras
+        async function enumerateCameras() {
+            try {
+                // Request permission first to get device labels
+                const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                tempStream.getTracks().forEach(track => track.stop());
+
+                // Now enumerate with labels
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                const cameraSelect = document.getElementById('cameraSelect');
+                cameraSelect.innerHTML = '';
+
+                if (videoDevices.length === 0) {
+                    cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+                    return;
+                }
+
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                // Select first camera by default
+                selectedCameraId = videoDevices[0].deviceId;
+                console.log(`Found ${videoDevices.length} camera(s)`);
+            } catch (err) {
+                console.error('Error enumerating cameras:', err);
+                document.getElementById('cameraSelect').innerHTML = '<option value="">Error detecting cameras</option>';
+            }
+        }
+
+        // Handle camera selection change
+        document.getElementById('cameraSelect').addEventListener('change', async (e) => {
+            selectedCameraId = e.target.value;
+            console.log('Selected camera:', selectedCameraId);
+
+            // If already running, switch camera
+            if (isAnalysisRunning && localStream) {
+                try {
+                    // Stop current stream
+                    localStream.getTracks().forEach(track => track.stop());
+
+                    // Get new stream with selected camera
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                            deviceId: { exact: selectedCameraId },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                        }
+                    });
+
+                    // Update video element
+                    videoElement.srcObject = localStream;
+
+                    // Replace track in peer connection
+                    const videoTrack = localStream.getVideoTracks()[0];
+                    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (sender) {
+                        await sender.replaceTrack(videoTrack);
+                        console.log('Camera switched successfully');
+                    }
+                } catch (err) {
+                    console.error('Error switching camera:', err);
+                    alert('Failed to switch camera: ' + err.message);
+                }
+            }
+
+            // Trigger flash animation
+            const cameraSelect = document.getElementById('cameraSelect');
+            cameraSelect.classList.add('applied');
+            setTimeout(() => {
+                cameraSelect.classList.remove('applied');
+            }, 600);
+        });
+
+        // Also trigger flash on blur (when dropdown closes)
+        document.getElementById('cameraSelect').addEventListener('blur', () => {
+            const cameraSelect = document.getElementById('cameraSelect');
+            if (cameraSelect.value) {
+                // Trigger flash animation
+                cameraSelect.classList.add('applied');
+                setTimeout(() => {
+                    cameraSelect.classList.remove('applied');
+                }, 600);
+            }
+        });
+
+        // Tooltip positioning (for fixed position tooltips)
+        document.querySelectorAll('.tooltip-wrapper').forEach(wrapper => {
+            const icon = wrapper.querySelector('.tooltip-icon');
+            const tooltip = wrapper.querySelector('.tooltip-text');
+
+            if (icon && tooltip) {
+                wrapper.addEventListener('mouseenter', () => {
+                    const rect = icon.getBoundingClientRect();
+                    tooltip.style.left = `${rect.left}px`;
+                    tooltip.style.top = `${rect.bottom + 8}px`;
+                });
+            }
+        });
+
+        // Handle input source tabs (Webcam vs RTSP)
+        document.querySelectorAll('.input-source-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const source = tab.getAttribute('data-source');
+                const webcamControls = document.getElementById('webcamControls');
+                const rtspControls = document.getElementById('rtspControls');
+                const rtspBetaWarning = document.getElementById('rtspBetaWarning');
+                const startBtn = document.getElementById('startBtn');
+
+                // Update active tab
+                document.querySelectorAll('.input-source-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+
+                // Show/hide controls
+                if (source === 'webcam') {
+                    webcamControls.style.display = 'block';
+                    rtspControls.style.display = 'none';
+                    rtspBetaWarning.style.display = 'none';
+                } else if (source === 'rtsp') {
+                    webcamControls.style.display = 'none';
+                    rtspControls.style.display = 'block';
+                    rtspBetaWarning.style.display = 'flex';
+                }
+            });
+        });
+
+        // Clear RTSP status message when user types
+        const rtspUrlInput = document.getElementById('rtspUrl');
+        rtspUrlInput.addEventListener('input', () => {
+            const statusDiv = document.getElementById('rtspStatus');
+            statusDiv.style.display = 'none';
+        });
+
+        // Green flash animation when RTSP URL is set (same as API Base URL)
+        rtspUrlInput.addEventListener('blur', () => {
+            if (rtspUrlInput.value.trim()) {
+                rtspUrlInput.classList.add('applied');
+                setTimeout(() => {
+                    rtspUrlInput.classList.remove('applied');
+                }, 600);
+            }
+        });
+
+        // Test RTSP connection
+        document.getElementById('testRtspBtn').addEventListener('click', async () => {
+            const rtspUrl = document.getElementById('rtspUrl').value.trim();
+            const statusDiv = document.getElementById('rtspStatus');
+            const testBtn = document.getElementById('testRtspBtn');
+
+            if (!rtspUrl) {
+                statusDiv.textContent = '⚠️ Please enter an RTSP URL';
+                statusDiv.style.display = 'block';
+                statusDiv.style.color = '#ff6b35';
+                return;
+            }
+
+            testBtn.disabled = true;
+            statusDiv.textContent = '🔄 Testing connection...';
+            statusDiv.style.display = 'block';
+            statusDiv.style.color = '#76b900';
+
+            try {
+                const response = await fetch('/api/rtsp/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        rtsp_url: rtspUrl,
+                        session_id: 'test-' + Date.now()
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const info = data.stream_info;
+                    statusDiv.innerHTML = `✅ Connected!<br>${info.codec} ${info.width}x${info.height} @${info.fps}fps`;
+                    statusDiv.style.color = '#76b900';
+
+                    // Stop the test connection after 2 seconds
+                    setTimeout(async () => {
+                        await fetch('/api/rtsp/stop', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ session_id: data.session_id })
+                        });
+                    }, 2000);
+                } else {
+                    statusDiv.textContent = '❌ ' + (data.error || 'Connection failed');
+                    statusDiv.style.color = '#ff6b35';
+                }
+            } catch (err) {
+                console.error('RTSP test error:', err);
+                statusDiv.textContent = '❌ Connection failed: ' + err.message;
+                statusDiv.style.color = '#ff6b35';
+            } finally {
+                testBtn.disabled = false;
+            }
+        });
+
+        // Tooltip positioning - dynamically position tooltip to avoid clipping
+        document.querySelectorAll('.tooltip-wrapper').forEach(wrapper => {
+            const icon = wrapper.querySelector('.tooltip-icon');
+            const tooltip = wrapper.querySelector('.tooltip-text');
+
+            if (icon && tooltip) {
+                icon.addEventListener('mouseenter', () => {
+                    const rect = icon.getBoundingClientRect();
+                    const tooltipWidth = 380; // Match CSS width
+
+                    // Position below the icon
+                    let left = rect.left - 10; // Slight offset to left
+                    let top = rect.bottom + 8;
+
+                    // Ensure tooltip doesn't go off right edge of viewport
+                    if (left + tooltipWidth > window.innerWidth - 20) {
+                        left = window.innerWidth - tooltipWidth - 20;
+                    }
+
+                    // Ensure tooltip doesn't go off left edge
+                    if (left < 20) {
+                        left = 20;
+                    }
+
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                });
+            }
+        });
+
+        // Markdown rendering function
+        function renderMarkdown(text) {
+            if (!text) return '';
+            const plainText = document.createElement('div');
+            plainText.textContent = text;
+            // Check if libraries are loaded
+            if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+                console.warn('Markdown libraries not loaded, falling back to plain text');
+                return plainText.innerHTML;
+            }
+            try {
+                // Configure marked options
+                marked.setOptions({
+                    breaks: true,  // Convert line breaks to <br>
+                    gfm: true,     // GitHub Flavored Markdown
+                });
+                // Parse markdown and sanitize HTML
+                const html = marked.parse(text);
+                return DOMPurify.sanitize(html, {
+                    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'code', 'pre', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'a'],
+                    ALLOWED_ATTR: ['href', 'title'],
+                });
+            } catch (e) {
+                console.error('Error rendering markdown:', e);
+                return plainText.innerHTML; // Escaped plain text on error
+            }
+        }
+
+        // Update markdown toggle UI
+        function updateMarkdownToggleUI() {
+            const contentDiv = document.getElementById('resultTextContent');
+            if (markdownEnabled) {
+                markdownIcon.innerHTML = '<i data-lucide="code"></i>';
+                markdownText.textContent = 'Markdown';
+                if (contentDiv) {
+                    contentDiv.classList.add('markdown-rendered');
+                } else {
+                    resultText.classList.add('markdown-rendered');
+                }
+            } else {
+                markdownIcon.innerHTML = '<i data-lucide="file-text"></i>';
+                markdownText.textContent = 'Plain Text';
+                if (contentDiv) {
+                    contentDiv.classList.remove('markdown-rendered');
+                } else {
+                    resultText.classList.remove('markdown-rendered');
+                }
+            }
+            lucide.createIcons();
+        }
+
+        // Markdown toggle handler
+        markdownToggle.addEventListener('click', () => {
+            markdownEnabled = !markdownEnabled;
+            localStorage.setItem('markdownEnabled', markdownEnabled.toString());
+            updateMarkdownToggleUI();
+
+            // Re-render current text with new mode
+            if (lastText) {
+                updateResultText(lastText);
+            }
+        });
+
+        // Initialize markdown toggle state
+        updateMarkdownToggleUI();
+
+        // Copy to clipboard functionality
+        copyButton.addEventListener('click', async () => {
+            const contentDiv = document.getElementById('resultTextContent');
+            let textToCopy = '';
+
+            if (contentDiv) {
+                // If markdown is enabled, copy the raw text (not HTML)
+                if (markdownEnabled) {
+                    // Get the raw text by reading from lastText or extracting from content
+                    textToCopy = lastText || contentDiv.innerText || contentDiv.textContent;
+                } else {
+                    textToCopy = contentDiv.textContent || contentDiv.innerText;
+                }
+            } else {
+                textToCopy = resultText.textContent || resultText.innerText;
+            }
+
+            if (!textToCopy || textToCopy.trim() === '') {
+                return; // Nothing to copy
+            }
+
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+
+                // Visual feedback
+                const originalHTML = copyButton.innerHTML;
+
+                copyButton.classList.add('copied');
+                copyButton.innerHTML = '<i data-lucide="check"></i>';
+                lucide.createIcons();
+
+                // Reset after 0.8 seconds
+                setTimeout(() => {
+                    copyButton.classList.remove('copied');
+                    copyButton.innerHTML = originalHTML;
+                    lucide.createIcons();
+                }, 800);
+            } catch (err) {
+                console.error('Failed to copy text:', err);
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = textToCopy;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    copyButton.classList.add('copied');
+                    setTimeout(() => copyButton.classList.remove('copied'), 500);
+                } catch (e) {
+                    console.error('Fallback copy failed:', e);
+                }
+                document.body.removeChild(textArea);
+            }
+        });
+
+        // Function to update result text (handles both markdown and plain text)
+        function updateResultText(text) {
+            const contentDiv = document.getElementById('resultTextContent');
+            if (!contentDiv) {
+                // Fallback if content div doesn't exist yet
+                if (markdownEnabled) {
+                    resultText.innerHTML = renderMarkdown(text);
+                } else {
+                    resultText.textContent = text;
+                }
+                return;
+            }
+            // Update only the content div, preserving the button
+            if (markdownEnabled) {
+                contentDiv.innerHTML = renderMarkdown(text);
+            } else {
+                contentDiv.textContent = text;
+            }
+
+            // Auto-sync to fullscreen overlay if in fullscreen mode
+            const videoCard = document.getElementById('videoCard');
+            if (videoCard && videoCard.classList.contains('fullscreen')) {
+                syncVlmToFullscreen();
+            }
+        }
+
+        // Enumerate cameras on page load
+        const camerasReady = enumerateCameras();
+
+        // Theme management: Honor OS preference with manual override support
+        function applyTheme(theme) {
+            // theme can be 'light', 'dark', or 'auto'
+            if (theme === 'light') {
+                document.body.classList.add('light-theme');
+                themeIcon.innerHTML = '<i data-lucide="sun"></i>';
+                themeText.textContent = 'Light';
+            } else if (theme === 'dark') {
+                document.body.classList.remove('light-theme');
+                themeIcon.innerHTML = '<i data-lucide="moon"></i>';
+                themeText.textContent = 'Dark';
+            } else { // 'auto' - follow OS preference
+                const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+                if (prefersLight) {
+                    document.body.classList.add('light-theme');
+                } else {
+                    document.body.classList.remove('light-theme');
+                }
+                // Always show monitor icon for AUTO mode
+                themeIcon.innerHTML = '<i data-lucide="monitor"></i>';
+                themeText.textContent = 'Auto';
+            }
+            lucide.createIcons();
+
+            // Update product image for theme-aware icons (Mac/PC workstation icons)
+            if (window.lastSystemStats) {
+                const productImg = document.getElementById('systemProductImage');
+                const imageSrc = getSystemProductImage(window.lastSystemStats);
+                if (imageSrc) {
+                    productImg.src = imageSrc;
+                    // Also update background image
+                    const systemStatsCard = document.getElementById('systemStatsCard');
+                    systemStatsCard.style.setProperty('--system-bg-image', `url('${imageSrc}')`);
+                }
+            }
+        }
+
+        // Theme Toggle: cycles through Auto -> Light -> Dark -> Auto
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = localStorage.getItem('theme') || 'auto';
+            let nextTheme;
+
+            if (currentTheme === 'auto' || !currentTheme) {
+                nextTheme = 'light';
+            } else if (currentTheme === 'light') {
+                nextTheme = 'dark';
+            } else { // dark
+                nextTheme = 'auto';
+            }
+
+            // Only save manual overrides (light/dark) to localStorage
+            // Don't save 'auto' - always check OS preference when in auto mode
+            if (nextTheme === 'auto') {
+                localStorage.removeItem('theme');
+            } else {
+                localStorage.setItem('theme', nextTheme);
+            }
+            applyTheme(nextTheme);
+        });
+
+        // Load saved theme or detect OS preference
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+            // User has manually set a preference - use it
+            applyTheme(savedTheme);
+        } else {
+            // No manual preference saved - follow OS preference
+            applyTheme('auto');
+        }
+
+        // Listen for OS preference changes when in 'auto' mode
+        const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+        colorSchemeQuery.addEventListener('change', (e) => {
+            const currentTheme = localStorage.getItem('theme');
+            // Only update if user hasn't manually set a preference
+            if (!currentTheme || currentTheme === 'auto') {
+                applyTheme('auto');
+            }
+        });
+
+        // Load saved colorful UI accents setting (default: disabled for clean two-tone system)
+        const colorfulFocusToggle = document.getElementById('colorfulFocusToggle');
+        const colorfulFocusSaved = localStorage.getItem('colorfulFocus');
+        if (colorfulFocusSaved === 'true') {
+            document.body.classList.add('colorful-focus');
+            colorfulFocusToggle.checked = true;
+        } else {
+            // Default: neutral white/gray icons and focus glows with green flash
+            document.body.classList.remove('colorful-focus');
+            colorfulFocusToggle.checked = false;
+        }
+
+        // Settings Modal
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const settingsClose = document.getElementById('settingsClose');
+        const popInToggle = document.getElementById('popInToggle');
+        const glowToggle = document.getElementById('glowToggle');
+        const fadeToggle = document.getElementById('fadeToggle');
+        const overlayPosition = document.getElementById('overlayPosition');
+        const layoutOrder = document.getElementById('layoutOrder');
+        const videoOverlay = document.getElementById('videoOverlay');
+        const gpuUpdateInterval = document.getElementById('gpuUpdateInterval');
+
+        // Settings state
+        const settings = {
+            popIn: localStorage.getItem('popIn') !== 'false',
+            glow: localStorage.getItem('glow') !== 'false',
+            fade: localStorage.getItem('fade') !== 'false',
+            overlayPosition: localStorage.getItem('overlayPosition') || 'none',
+            layoutOrder: localStorage.getItem('layoutOrder') || 'vlm-first',
+            gpuUpdateInterval: parseFloat(localStorage.getItem('gpuUpdateInterval')) || 0.25
+        };
+
+        // Load saved settings
+        popInToggle.checked = settings.popIn;
+        glowToggle.checked = settings.glow;
+        fadeToggle.checked = settings.fade;
+        overlayPosition.value = settings.overlayPosition;
+        layoutOrder.value = settings.layoutOrder;
+        gpuUpdateInterval.value = settings.gpuUpdateInterval;
+
+        // Apply overlay position
+        function applyOverlayPosition(position) {
+            videoOverlay.classList.remove('show', 'top', 'bottom');
+            const resultText = document.getElementById('resultText');
+
+            if (position !== 'none') {
+                // Overlay enabled - show on video, hide response balloon (keep prompt visible)
+                videoOverlay.classList.add('show', position);
+                resultText.style.display = 'none';
+            } else {
+                // Overlay disabled - hide from video, show response balloon
+                resultText.style.display = 'block';
+            }
+        }
+        applyOverlayPosition(settings.overlayPosition);
+
+        // Apply layout order
+        function applyLayoutOrder(order) {
+            const mainContent = document.querySelector('.main-content');
+            const videoCard = document.querySelector('.video-card');
+            const resultCard = document.querySelector('.result-card');
+
+            if (order === 'vlm-first') {
+                // VLM Output Info at top, Camera below (default)
+                mainContent.insertBefore(resultCard, videoCard);
+            } else {
+                // Camera at top, VLM Output Info below
+                mainContent.insertBefore(videoCard, resultCard);
+            }
+        }
+        applyLayoutOrder(settings.layoutOrder);
+
+        // Open settings modal
+        settingsBtn.addEventListener('click', () => {
+            settingsModal.classList.add('show');
+        });
+
+        // Close settings modal
+        settingsClose.addEventListener('click', () => {
+            settingsModal.classList.remove('show');
+        });
+
+        // Close modal when clicking outside
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                settingsModal.classList.remove('show');
+            }
+        });
+
+        // Handle settings changes
+        popInToggle.addEventListener('change', (e) => {
+            settings.popIn = e.target.checked;
+            localStorage.setItem('popIn', settings.popIn);
+        });
+
+        glowToggle.addEventListener('change', (e) => {
+            settings.glow = e.target.checked;
+            localStorage.setItem('glow', settings.glow);
+        });
+
+        fadeToggle.addEventListener('change', (e) => {
+            settings.fade = e.target.checked;
+            localStorage.setItem('fade', settings.fade);
+        });
+
+        colorfulFocusToggle.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            localStorage.setItem('colorfulFocus', enabled);
+            if (enabled) {
+                document.body.classList.add('colorful-focus');
+            } else {
+                document.body.classList.remove('colorful-focus');
+            }
+            // Force icon re-render to apply new colors
+            lucide.createIcons();
+        });
+
+        overlayPosition.addEventListener('change', (e) => {
+            settings.overlayPosition = e.target.value;
+            localStorage.setItem('overlayPosition', settings.overlayPosition);
+            applyOverlayPosition(settings.overlayPosition);
+        });
+
+        layoutOrder.addEventListener('change', (e) => {
+            settings.layoutOrder = e.target.value;
+            localStorage.setItem('layoutOrder', settings.layoutOrder);
+            applyLayoutOrder(settings.layoutOrder);
+        });
+
+        gpuUpdateInterval.addEventListener('change', (e) => {
+            const newInterval = parseFloat(e.target.value);
+            if (!isNaN(newInterval) && newInterval >= 0.1 && newInterval <= 5.0) {
+                settings.gpuUpdateInterval = newInterval;
+                localStorage.setItem('gpuUpdateInterval', settings.gpuUpdateInterval);
+                console.log(`🔄 GPU graph update interval changed to ${newInterval}s (updates every ${newInterval}s)`);
+                console.log(`📊 Note: Server still sends stats every 0.25s, but graphs will only redraw at the configured rate`);
+                // Reset lastGPUUpdate to allow immediate update with new interval
+                lastGPUUpdate = 0;
+            } else {
+                console.warn('Invalid GPU update interval, keeping previous value');
+                e.target.value = settings.gpuUpdateInterval;
+            }
+        });
+
+        // Panel Toggle
+        function togglePanel(panelId) {
+            const content = document.getElementById(panelId);
+            const toggle = document.getElementById(panelId + 'Toggle');
+            content.classList.toggle('collapsed');
+            toggle.classList.toggle('collapsed');
+        }
+
+        // Fullscreen Toggle
+        function toggleFullscreen() {
+            const videoCard = document.getElementById('videoCard');
+            const fullscreenIcon = document.getElementById('fullscreenIcon');
+
+            videoCard.classList.toggle('fullscreen');
+
+            // Update icon: maximize when normal, minimize when fullscreen
+            if (videoCard.classList.contains('fullscreen')) {
+                fullscreenIcon.setAttribute('data-lucide', 'minimize');
+                // Sync current VLM output to fullscreen overlay
+                syncVlmToFullscreen();
+            } else {
+                fullscreenIcon.setAttribute('data-lucide', 'maximize');
+            }
+            lucide.createIcons();
+        }
+
+        // Sync VLM output to fullscreen overlay
+        function syncVlmToFullscreen() {
+            const mainVlmContent = document.getElementById('resultTextContent');
+            const fullscreenVlmContent = document.getElementById('fullscreenVlmContent');
+            const fullscreenVlmMetrics = document.getElementById('fullscreenVlmMetrics');
+
+            if (mainVlmContent && fullscreenVlmContent) {
+                fullscreenVlmContent.innerHTML = mainVlmContent.innerHTML || 'Ready';
+            }
+
+            // Add metrics if available
+            const latency = document.getElementById('latencyValue')?.textContent;
+            const count = document.getElementById('countValue')?.textContent;
+            if (latency && count) {
+                fullscreenVlmMetrics.innerHTML = `<span>Latency: ${latency}ms</span><span>Count: ${count}</span>`;
+            }
+        }
+
+        // ESC key to exit fullscreen
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const videoCard = document.getElementById('videoCard');
+                if (videoCard.classList.contains('fullscreen')) {
+                    toggleFullscreen();
+                }
+            }
+        });
+
+        // API Key Field Toggle
+        function toggleApiKeyField() {
+            const field = document.getElementById('apiKeyField');
+            const toggle = document.getElementById('apiKeyToggle');
+            field.classList.toggle('collapsed');
+            toggle.classList.toggle('collapsed');
+        }
+
+        // Check if API Base URL requires API key
+        function checkApiKeyRequirement(url) {
+            const apiKeyField = document.getElementById('apiKeyField');
+            const apiKeyToggle = document.getElementById('apiKeyToggle');
+
+            // Check if URL is a remote service (not localhost or 127.0.0.1)
+            const isLocal = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0');
+            const isRemote = !isLocal;
+
+            if (isRemote) {
+                // Show API key field for remote services
+                apiKeyField.classList.remove('collapsed');
+                apiKeyToggle.classList.remove('collapsed');
+                console.log('Remote API detected - API Key field expanded');
+            } else {
+                // Hide API key field for local services
+                apiKeyField.classList.add('collapsed');
+                apiKeyToggle.classList.add('collapsed');
+                console.log('Local API detected - API Key field collapsed');
+            }
+        }
+
+        // Status Update
+        function updateStatus(message, state) {
+            connectionStatus.textContent = message;
+            connectionStatus.className = `status-badge ${state}`;
+        }
+
+        // Detect Local VLM Services
+        async function detectServices() {
+            try {
+                const response = await fetch('/detect-services');
+                const data = await response.json();
+
+                if (data.default) {
+                    const service = data.default;
+                    console.log('Detected service:', service.name);
+
+                    // Update API Base URL
+                    apiBaseUrl.value = service.url;
+
+                    // Check if API key is required
+                    checkApiKeyRequirement(service.url);
+                    updateSystemStatsVisibility(service.url);
+
+                    // Update hint text
+                    const hintDiv = apiBaseUrl.nextElementSibling;
+                    if (data.detected.length > 1) {
+                        const serviceNames = data.detected.map(s => s.name).join(', ');
+                        hintDiv.textContent = `Detected: ${serviceNames}`;
+                    } else if (service.name === 'NVIDIA API Catalog') {
+                        hintDiv.textContent = 'No local VLM services found. Using NVIDIA API Catalog (requires API key from build.nvidia.com)';
+                    }
+                }
+            } catch (error) {
+                console.error('Error detecting services:', error);
+                // Default to showing API key field on error
+                checkApiKeyRequirement('https://');
+            }
+        }
+
+        // Fetch Models
+        async function fetchModels() {
+            try {
+                modelSelect.innerHTML = '<option value="">Loading models...</option>';
+
+                // Get current API settings from UI
+                const currentApiBase = apiBaseUrl.value.trim();
+                const currentApiKey = apiKey.value.trim();
+
+                // Build query params
+                const params = new URLSearchParams();
+                if (currentApiBase) {
+                    params.append('api_base', currentApiBase);
+                }
+                if (currentApiKey) {
+                    params.append('api_key', currentApiKey);
+                }
+
+                const url = `/models${params.toString() ? '?' + params.toString() : ''}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.models && data.models.length > 0) {
+                    modelSelect.innerHTML = '';
+                    let currentModel = null;
+                    let autoSelectedModel = null;
+
+                    data.models.forEach((model, index) => {
+                        const option = document.createElement('option');
+                        option.value = model.id;
+                        option.textContent = model.id;
+                        if (model.current) {
+                            option.selected = true;
+                            currentModel = model.id;
+                        }
+                        modelSelect.appendChild(option);
+                    });
+
+                    // If no current model, auto-select first model and apply
+                    if (!currentModel && data.models.length > 0) {
+                        autoSelectedModel = data.models[0].id;
+                        modelSelect.value = autoSelectedModel;
+                        currentModel = autoSelectedModel;
+
+                        // Auto-apply the new model
+                        console.log(`Auto-selected model: ${autoSelectedModel}`);
+                        applyApiSettings({ showFeedback: false });
+                    }
+
+                    // Update model name in VLM output header
+                    if (currentModel) {
+                        document.getElementById('modelName').textContent = currentModel;
+                    }
+                } else {
+                    modelSelect.innerHTML = '<option value="">No models available</option>';
+                }
+            } catch (error) {
+                console.error('Error fetching models:', error);
+                modelSelect.innerHTML = '<option value="">Error loading models</option>';
+            }
+        }
+
+        // Handle model change
+        modelSelect.addEventListener('change', (e) => {
+            const newModel = e.target.value;
+            if (!newModel) return;
+
+            // Update model name in VLM output header
+            document.getElementById('modelName').textContent = newModel;
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                // Send model, API base, and API key together
+                websocket.send(JSON.stringify({
+                    type: 'update_model',
+                    model: newModel,
+                    api_base: apiBaseUrl.value.trim(),
+                    api_key: apiKey.value.trim()
+                }));
+                updateStatus('Model configured', 'connected');
+            }
+
+            // Trigger flash animation
+            modelSelect.classList.add('applied');
+            setTimeout(() => {
+                modelSelect.classList.remove('applied');
+            }, 600);
+        });
+
+        // Also trigger flash on blur (when dropdown closes)
+        modelSelect.addEventListener('blur', () => {
+            const currentModel = modelSelect.value;
+            if (currentModel) {
+                // Trigger flash animation
+                modelSelect.classList.add('applied');
+                setTimeout(() => {
+                    modelSelect.classList.remove('applied');
+                }, 600);
+            }
+        });
+
+        // Helper function to apply prompt settings
+        function applyPromptSettings() {
+            const newPrompt = promptText.value.trim();
+            const tokens = parseInt(maxTokens.value) || 512;
+
+            if (!newPrompt) {
+                return; // Silently skip if empty
+            }
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'update_prompt',
+                    prompt: newPrompt,
+                    max_tokens: tokens
+                }));
+
+                // Update the displayed prompt (chat bubble style)
+                const promptPreview = newPrompt.length > 150 ? newPrompt.substring(0, 150) + '...' : newPrompt;
+                currentPrompt.textContent = `Prompt: ${promptPreview}`;
+            }
+        }
+
+        thinkingMode.addEventListener('change', () => {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                thinkingMode.disabled = true;
+                websocket.send(JSON.stringify({
+                    type: 'update_reasoning',
+                    reasoning_effort: thinkingMode.value || null
+                }));
+            }
+        });
+
+        // Handle preset selection
+        promptPreset.addEventListener('change', (e) => {
+            if (e.target.value) {
+                promptText.value = e.target.value;
+                applyPromptSettings();
+
+                // Trigger flash animation to show prompt was applied
+                promptText.classList.add('applied');
+                setTimeout(() => {
+                    promptText.classList.remove('applied');
+                }, 600); // Match animation duration
+            }
+        });
+
+        // Auto-apply prompt on blur (when user finishes editing)
+        promptText.addEventListener('blur', () => {
+            applyPromptSettings();
+
+            // Trigger flash animation to show prompt was applied
+            promptText.classList.add('applied');
+            setTimeout(() => {
+                promptText.classList.remove('applied');
+            }, 600); // Match animation duration
+        });
+
+        // Auto-apply when max tokens changes
+        maxTokens.addEventListener('change', () => {
+            applyPromptSettings();
+
+            // Trigger flash animation to show setting was applied
+            maxTokens.classList.add('applied');
+            setTimeout(() => {
+                maxTokens.classList.remove('applied');
+            }, 600); // Match animation duration
+        });
+
+        // Also trigger flash on blur (after tabbing away or clicking out)
+        maxTokens.addEventListener('blur', () => {
+            applyPromptSettings();
+
+            // Trigger flash animation
+            maxTokens.classList.add('applied');
+            setTimeout(() => {
+                maxTokens.classList.remove('applied');
+            }, 600);
+        });
+
+        refreshModelsBtn.addEventListener('click', fetchModels);
+
+        // Helper function to apply API settings to server
+        function applyApiSettings(options = {}) {
+            const currentApiBase = apiBaseUrl.value.trim();
+            const currentApiKey = apiKey.value.trim();
+            const currentModel = modelSelect.value;
+
+            if (!currentApiBase) {
+                return; // Silently skip if no API base
+            }
+
+            if (!currentModel) {
+                return; // Silently skip if no model selected yet
+            }
+
+            // Send update to server
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'update_model',
+                    model: currentModel,
+                    api_base: currentApiBase,
+                    api_key: currentApiKey
+                }));
+
+                if (options.showFeedback) {
+                    updateStatus('API settings updated', 'connected');
+                }
+
+                // Refresh models from new endpoint if requested
+                if (options.refreshModels) {
+                    fetchModels();
+                }
+            }
+        }
+
+        // Auto-apply API settings when API Base URL changes
+        apiBaseUrl.addEventListener('blur', (e) => {
+            checkApiKeyRequirement(e.target.value);
+            updateSystemStatsVisibility(e.target.value);
+            applyApiSettings({ refreshModels: true, showFeedback: true });
+
+            // Trigger flash animation
+            apiBaseUrl.classList.add('applied');
+            setTimeout(() => {
+                apiBaseUrl.classList.remove('applied');
+            }, 600);
+        });
+
+        apiBaseUrl.addEventListener('change', (e) => {
+            checkApiKeyRequirement(e.target.value);
+            updateSystemStatsVisibility(e.target.value);
+            applyApiSettings({ refreshModels: true, showFeedback: true });
+
+            // Trigger flash animation
+            apiBaseUrl.classList.add('applied');
+            setTimeout(() => {
+                apiBaseUrl.classList.remove('applied');
+            }, 600);
+        });
+
+        // Auto-apply API settings when API Key changes (with debounce)
+        let apiKeyDebounceTimer;
+        apiKey.addEventListener('input', () => {
+            clearTimeout(apiKeyDebounceTimer);
+            apiKeyDebounceTimer = setTimeout(() => {
+                applyApiSettings({ showFeedback: false });
+            }, 1000); // Wait 1 second after user stops typing
+        });
+
+        // Flash animation when API Key loses focus
+        apiKey.addEventListener('blur', () => {
+            clearTimeout(apiKeyDebounceTimer);
+            applyApiSettings({ showFeedback: false });
+
+            // Trigger flash animation
+            apiKey.classList.add('applied');
+            setTimeout(() => {
+                apiKey.classList.remove('applied');
+            }, 600);
+        });
+
+        // API Presets Menu
+        const apiPresetsBtn = document.getElementById('apiPresetsBtn');
+        const apiPresetsMenu = document.getElementById('apiPresetsMenu');
+
+        apiPresetsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            apiPresetsMenu.style.display = apiPresetsMenu.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!apiPresetsMenu.contains(e.target) && e.target !== apiPresetsBtn) {
+                apiPresetsMenu.style.display = 'none';
+            }
+        });
+
+        // Handle preset selection
+        document.querySelectorAll('.api-preset-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const url = e.currentTarget.getAttribute('data-url');
+                apiBaseUrl.value = url;
+                apiPresetsMenu.style.display = 'none';
+
+                // Trigger checks
+                checkApiKeyRequirement(url);
+                updateSystemStatsVisibility(url);
+
+                // Auto-apply new API settings
+                applyApiSettings({ refreshModels: true, showFeedback: true });
+
+                // Update hint
+                const hint = document.getElementById('apiBaseHint');
+                const serviceName = e.currentTarget.querySelector('strong').textContent;
+                hint.textContent = `Using ${serviceName}`;
+            });
+        });
+
+        // Update system stats visibility based on API endpoint
+        function updateSystemStatsVisibility(url) {
+            const systemStatsCard = document.getElementById('systemStatsCard');
+            const isLocal = url.includes('localhost') || url.includes('127.0.0.1') || url.includes('0.0.0.0');
+
+            if (isLocal) {
+                systemStatsCard.classList.remove('cloud-api');
+            } else {
+                systemStatsCard.classList.add('cloud-api');
+            }
+        }
+
+        // Mirror video toggle
+        mirrorBtn.addEventListener('click', () => {
+            videoElement.classList.toggle('mirrored');
+            mirrorBtn.classList.toggle('active');
+        });
+
+        // Auto-apply processing interval on change
+        processEvery.addEventListener('change', () => {
+            const interval = parseInt(processEvery.value) || 30;
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'update_processing',
+                    process_every: interval
+                }));
+            }
+
+            // Trigger flash animation
+            processEvery.classList.add('applied');
+            setTimeout(() => {
+                processEvery.classList.remove('applied');
+            }, 600);
+        });
+
+        // Also trigger flash on blur
+        processEvery.addEventListener('blur', () => {
+            const interval = parseInt(processEvery.value) || 30;
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'update_processing',
+                    process_every: interval
+                }));
+            }
+
+            // Trigger flash animation
+            processEvery.classList.add('applied');
+            setTimeout(() => {
+                processEvery.classList.remove('applied');
+            }, 600);
+        });
+
+        // Auto-apply max latency on change
+        maxLatency.addEventListener('change', () => {
+            const latency = parseFloat(maxLatency.value) || 1.0;
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'update_max_latency',
+                    max_latency: latency
+                }));
+            }
+        });
+
+        // Debug payload toggles (Settings modal): send set_debug so server includes request/response payload in vlm_response
+        function sendDebugFlags() {
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+            const req = document.getElementById('debugShowRequestPayload');
+            const res = document.getElementById('debugShowResponsePayload');
+            if (req && res) {
+                websocket.send(JSON.stringify({
+                    type: 'set_debug',
+                    show_request_payload: req.checked,
+                    show_response_payload: res.checked
+                }));
+            }
+        }
+        const debugShowRequestPayload = document.getElementById('debugShowRequestPayload');
+        const debugShowResponsePayload = document.getElementById('debugShowResponsePayload');
+        const requestPayloadDebugEl = document.getElementById('requestPayloadDebug');
+        const responsePayloadDebugEl = document.getElementById('responsePayloadDebug');
+        if (debugShowRequestPayload) {
+            debugShowRequestPayload.addEventListener('change', () => {
+                sendDebugFlags();
+                if (requestPayloadDebugEl) requestPayloadDebugEl.style.display = debugShowRequestPayload.checked ? 'block' : 'none';
+            });
+        }
+        if (debugShowResponsePayload) {
+            debugShowResponsePayload.addEventListener('change', () => {
+                sendDebugFlags();
+                if (responsePayloadDebugEl) responsePayloadDebugEl.style.display = debugShowResponsePayload.checked ? 'block' : 'none';
+            });
+        }
+
+        // Sparkline Drawing
+        function drawSparkline(canvas, data, color) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            ctx.clearRect(0, 0, width, height);
+
+            if (!data || data.length === 0) return;
+
+            // Filter out null/undefined values and convert to numbers
+            const validData = data.map(v => v === null || v === undefined ? 0 : v);
+            const max = Math.max(...validData, 1);
+            const step = width / (validData.length - 1 || 1);
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            validData.forEach((value, index) => {
+                const x = index * step;
+                const y = height - (value / max) * height;
+
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+
+            ctx.stroke();
+
+            ctx.lineTo(width, height);
+            ctx.lineTo(0, height);
+            ctx.closePath();
+            ctx.fillStyle = color + '20';
+            ctx.fill();
+        }
+
+        // Get product image based on system stats
+        function getSystemProductImage(stats) {
+            const productName = stats.product_name || '';
+            const boardName = stats.board_name || '';
+            const platform = stats.platform || '';
+            const gpuName = stats.gpu_name || '';
+
+            // Jetson boards
+            if (boardName.includes('Thor') || productName.includes('Thor')) {
+                return '/images/jetson-agx-thor-devkit_256px.png';
+            }
+            // Check for Orin Nano first (more specific)
+            if (boardName.includes('Orin Nano') || productName.includes('Orin Nano')) {
+                return '/images/jetson-orin-nano-devkit_217px.png';
+            }
+            // Then check for general Orin (AGX Orin)
+            if (boardName.includes('Orin') || productName.includes('Orin')) {
+                return '/images/jetson-agx-orin-devkit_256px.png';
+            }
+
+            // DGX systems
+            if (productName.includes('DGX Spark')) {
+                return '/images/dgx-spark_256px.png';
+            }
+
+            // MacBook - use laptop icon (theme-aware)
+            if (productName.includes('MacBook')) {
+                const isLightTheme = document.body.classList.contains('light-theme');
+                return isLightTheme ? '/images/m48-laptop-256px-blk.png' : '/images/m48-laptop-256px-wht.png';
+            }
+
+            // Other Mac products (Mac mini, iMac, Mac Studio, Mac Pro) - use workstation icon
+            if (productName.includes('Mac')) {
+                const isLightTheme = document.body.classList.contains('light-theme');
+                return isLightTheme ? '/images/m48-workstation-256px-blk.png' : '/images/m48-workstation-256px-wht.png';
+            }
+
+            // PC with NVIDIA GPU - show NVIDIA GPU chip image
+            if (gpuName.toLowerCase().includes('nvidia') || gpuName.toLowerCase().includes('geforce') ||
+                gpuName.toLowerCase().includes('rtx') || gpuName.toLowerCase().includes('gtx') ||
+                gpuName.toLowerCase().includes('quadro') || gpuName.toLowerCase().includes('tesla')) {
+                return '/images/m48-gpu-chip-text-256px-grn.png';
+            }
+
+            // Generic PC - use workstation icon
+            const isLightTheme = document.body.classList.contains('light-theme');
+            return isLightTheme ? '/images/m48-workstation-256px-blk.png' : '/images/m48-workstation-256px-wht.png';
+        }
+
+        // GPU Stats Throttling
+        let lastGPUUpdate = 0;
+        let pendingGPUStats = null;
+        let gpuUpdateCount = 0;
+
+        // Update GPU Stats (throttled based on settings.gpuUpdateInterval)
+        function updateGPUStats(stats) {
+            // Diagnostic logging (log every 10th update to avoid console spam)
+            gpuUpdateCount++;
+            if (gpuUpdateCount % 10 === 0) {
+                const gpuPercent = stats.gpu_percent !== null && stats.gpu_percent !== undefined ? stats.gpu_percent.toFixed(1) : 'N/A';
+                console.log(`📊 GPU Update #${gpuUpdateCount}: GPU=${gpuPercent}%, VRAM=${stats.vram_used_gb?.toFixed(1)}GB, CPU=${stats.cpu_percent?.toFixed(1)}%`);
+            }
+
+            // Update system info header
+            const hostname = stats.hostname || 'System';
+            const cpuModel = stats.cpu_model || 'Unknown CPU';
+            const gpuName = stats.gpu_name || 'Unknown GPU';
+            let boardName = stats.board_name;  // e.g., "Jetson AGX Thor Developer Kit"
+
+            // Safety check: ensure boardName is a string (not an object)
+            if (boardName && typeof boardName === 'object') {
+                console.warn('Board name is an object, expected string:', boardName);
+                boardName = null;  // Ignore it and fall back to regular display
+            }
+
+            // Format header based on platform
+            const systemInfoElem = document.getElementById('systemInfoHeader');
+            const productName = stats.product_name;
+            const gpuCores = stats.gpu_cores || 0;
+
+            // Check if there's a discrete GPU (not integrated graphics)
+            const hasDiscreteGPU = gpuName &&
+                !gpuName.includes('N/A') &&
+                !gpuName.includes('Unknown') &&
+                !gpuName.includes('Intel HD') &&
+                !gpuName.includes('Intel UHD') &&
+                !gpuName.includes('Intel Iris') &&
+                gpuName !== 'CPU';
+
+            // Helper: Remove frequency from CPU name for compact display
+            const cpuModelShort = cpuModel.replace(/\s*@\s*[\d.]+\s*[GM]Hz/gi, '').replace(/\s+/g, ' ').trim();
+
+            if (boardName && typeof boardName === 'string') {
+                // Jetson: Two-line format
+                // Line 1: Board name (hostname)
+                // Line 2: GPU name
+                const gpuDisplayName = gpuName.includes('GPU') ? gpuName : `${gpuName} GPU`;
+                systemInfoElem.innerHTML = `<b>${boardName}</b> (<code>${hostname}</code>)<br>${gpuDisplayName}`;
+            } else if (productName && productName.includes('DGX')) {
+                // DGX: Two-line format
+                // Line 1: DGX Product name (hostname)
+                // Line 2: GPU name
+                const gpuDisplayName = gpuName.includes('GPU') ? gpuName : `${gpuName} GPU`;
+                systemInfoElem.innerHTML = `<b>${productName}</b> (<code>${hostname}</code>)<br>${gpuDisplayName}`;
+            } else if (productName && productName.includes('Mac')) {
+                // Mac: Two-line format
+                // Line 1: Product name CPU (hostname)
+                // Line 2: GPU with cores
+                const gpuText = gpuCores > 0 ? `${gpuName} ${gpuCores}-core GPU` : `${gpuName} GPU`;
+                systemInfoElem.innerHTML = `${productName} ${cpuModel} (<code>${hostname}</code>)<br>${gpuText}`;
+            } else if (productName && !productName.includes('Mac') && !productName.includes('DGX')) {
+                // PC with product/motherboard name (branded or DIY)
+                if (hasDiscreteGPU) {
+                    // Has discrete GPU: Two-line format
+                    // Line 1: Product Name (hostname) with CPU (no frequency)
+                    // Line 2: GPU name
+                    const gpuDisplayName = gpuName.includes('GPU') ? gpuName : `${gpuName} GPU`;
+                    systemInfoElem.innerHTML = `<b>${productName}</b> (<code>${hostname}</code>) with ${cpuModelShort}<br>${gpuDisplayName}`;
+                } else {
+                    // No discrete GPU (integrated only): Two-line format
+                    // Line 1: Product Name (hostname)
+                    // Line 2: with CPU (including frequency)
+                    systemInfoElem.innerHTML = `<b>${productName}</b> (<code>${hostname}</code>)<br>with ${cpuModel}`;
+                }
+            } else {
+                // Generic PC
+                if (hasDiscreteGPU) {
+                    // Has discrete GPU: Two-line format
+                    // Line 1: Hostname with CPU (no frequency)
+                    // Line 2: GPU name
+                    const gpuDisplayName = gpuName.includes('GPU') ? gpuName : `${gpuName} GPU`;
+                    systemInfoElem.innerHTML = `<code>${hostname}</code> with ${cpuModelShort}<br>${gpuDisplayName}`;
+                } else {
+                    // No discrete GPU: Two-line format
+                    // Line 1: Hostname
+                    // Line 2: with CPU (including frequency)
+                    systemInfoElem.innerHTML = `<code>${hostname}</code><br>with ${cpuModel}`;
+                }
+            }
+
+            // Update product image (icon in header)
+            const productImg = document.getElementById('systemProductImage');
+            const imageSrc = getSystemProductImage(stats);
+            if (imageSrc) {
+                productImg.src = imageSrc;
+                productImg.style.display = 'block';
+
+                // Also set as background image for the card
+                const systemStatsCard = document.getElementById('systemStatsCard');
+                systemStatsCard.style.setProperty('--system-bg-image', `url('${imageSrc}')`);
+            } else {
+                productImg.style.display = 'none';
+            }
+
+            // GPU (Green)
+            const gpuPercent = stats.gpu_percent;
+            if (gpuPercent === null || gpuPercent === undefined) {
+                // GPU utilization unavailable (e.g., Mac without sudo)
+                document.getElementById('gpuUtil').textContent = 'N/A';
+                const gpuBar = document.getElementById('gpuUtilBar');
+                gpuBar.style.width = '0%';
+                gpuBar.style.background = '#666';  // Gray for unavailable
+            } else {
+                document.getElementById('gpuUtil').textContent = `${gpuPercent.toFixed(1)}%`;
+                const gpuBar = document.getElementById('gpuUtilBar');
+                gpuBar.style.width = `${gpuPercent}%`;
+                gpuBar.style.background = '#4CAF50';  // Green
+            }
+
+            // VRAM (Purple)
+            const vramUsed = stats.vram_used_gb;
+            const vramTotal = stats.vram_total_gb;
+            const vramPercent = stats.vram_percent;
+            if (vramUsed === null || vramUsed === undefined || vramTotal === null || vramTotal === undefined) {
+                // VRAM unavailable (e.g., GB10/Blackwell GPUs)
+                document.getElementById('vramUsage').textContent = 'N/A';
+                const vramBar = document.getElementById('vramBar');
+                vramBar.style.width = '0%';
+                vramBar.style.background = '#666';  // Gray for unavailable
+            } else {
+                document.getElementById('vramUsage').innerHTML = `${vramUsed.toFixed(1)}<span class="stat-value-denominator">/${vramTotal.toFixed(1)} GB</span>`;
+                const vramBar = document.getElementById('vramBar');
+                vramBar.style.width = `${vramPercent}%`;
+                vramBar.style.background = '#9C27B0';  // Purple
+            }
+
+            // CPU (Blue)
+            const cpuPercent = stats.cpu_percent || 0;
+            document.getElementById('cpuUtil').textContent = `${cpuPercent.toFixed(1)}%`;
+            const cpuBar = document.getElementById('cpuBar');
+            cpuBar.style.width = `${cpuPercent}%`;
+            cpuBar.style.background = '#2196F3';  // Blue
+
+            // RAM (Orange)
+            const ramUsed = stats.ram_used_gb || 0;
+            const ramTotal = stats.ram_total_gb || 0;
+            const ramPercent = stats.ram_percent || 0;
+            document.getElementById('ramUsage').innerHTML = `${ramUsed.toFixed(1)}<span class="stat-value-denominator">/${ramTotal.toFixed(1)} GB</span>`;
+            const ramBar = document.getElementById('ramBar');
+            ramBar.style.width = `${ramPercent}%`;
+            ramBar.style.background = '#FF9800';  // Orange
+
+            // Sparklines
+            if (stats.history) {
+                const canvases = {
+                    gpu: document.getElementById('gpuUtilSparkline'),
+                    vram: document.getElementById('vramSparkline'),
+                    cpu: document.getElementById('cpuSparkline'),
+                    ram: document.getElementById('ramSparkline')
+                };
+
+                // Set canvas dimensions (use offsetWidth with fallback to parent width)
+                Object.values(canvases).forEach(canvas => {
+                    const width = canvas.offsetWidth || canvas.parentElement.offsetWidth || 300;
+                    const height = canvas.offsetHeight || 40;
+
+                    // Only update if dimensions changed (avoid unnecessary canvas clears)
+                    if (canvas.width !== width || canvas.height !== height) {
+                        canvas.width = width;
+                        canvas.height = height;
+                    }
+                });
+
+                drawSparkline(canvases.gpu, stats.history.gpu_util, '#4CAF50');  // Green
+                drawSparkline(canvases.vram, stats.history.vram_used, '#9C27B0'); // Purple
+                drawSparkline(canvases.cpu, stats.history.cpu_util, '#2196F3');   // Blue
+                drawSparkline(canvases.ram, stats.history.ram_used, '#FF9800');   // Orange
+            }
+        }
+
+        // Periodic check for pending GPU stats updates
+        setInterval(() => {
+            if (pendingGPUStats) {
+                const now = Date.now();
+                const intervalMs = settings.gpuUpdateInterval * 1000;
+
+                if (now - lastGPUUpdate >= intervalMs) {
+                    updateGPUStats(pendingGPUStats);
+                    lastGPUUpdate = now;
+                    pendingGPUStats = null;
+                }
+            }
+        }, 50);  // Check every 50ms for smooth updates
+
+        // WebSocket Connection
+        function connectWebSocket() {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                return;
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws?session_id=${encodeURIComponent(sessionId)}`;
+
+            websocket = new WebSocket(wsUrl);
+
+            websocket.onopen = () => {
+                // Recreate the WebRTC session after the server becomes available again.
+                if (autoStart && !autoStartPending) {
+                    window.location.reload();
+                    return;
+                }
+                console.log('WebSocket connected');
+                updateStatus('Connected', 'connected');
+
+                // Send current model/API settings to server after WebSocket connects
+                // This ensures auto-selected models are properly initialized on the server side
+                // Fix for race condition: page load might auto-select model before WS connects
+                const currentModel = modelSelect.value;
+                if (currentModel && !autoStart) {
+                    console.log('Initializing server with current model:', currentModel);
+                    applyApiSettings({ showFeedback: false });
+                }
+            };
+
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'vlm_response') {
+                    // Trigger animations for new messages based on settings
+                    if (data.text !== lastText) {
+                        resultText.classList.remove('fade');
+                        resultText.classList.remove('new-message');
+
+                        // Apply pop-in animation if enabled
+                        if (settings.popIn) {
+                            // Force reflow to restart animation
+                            void resultText.offsetWidth;
+
+                            resultText.classList.add('new-message');
+
+                            // Add glow effect if enabled
+                            if (settings.glow) {
+                                resultText.classList.add('with-glow');
+                            }
+
+                            // Remove animation classes after it completes
+                            setTimeout(() => {
+                                resultText.classList.remove('new-message');
+                                resultText.classList.remove('with-glow');
+                            }, 400);
+                        }
+
+                        if (fadeTimeout) {
+                            clearTimeout(fadeTimeout);
+                        }
+
+                        // Start fade after 2 seconds if enabled
+                        if (settings.fade) {
+                            fadeTimeout = setTimeout(() => {
+                                resultText.classList.add('fade');
+                            }, 2000);
+                        }
+                    }
+
+                    updateResultText(data.text);
+                    lastText = data.text;
+
+                    // Update video overlay (always, visibility is controlled by CSS)
+                    videoOverlay.textContent = data.text;
+
+                    if (data.metrics) {
+                        metricsInline.style.display = 'flex';
+                        latencyValue.textContent = Math.round(data.metrics.last_latency_ms);
+                        avgLatencyValue.textContent = Math.round(data.metrics.avg_latency_ms);
+                        countValue.textContent = data.metrics.total_inferences;
+                    }
+                    if (data.request_payload) {
+                        const block = document.getElementById('requestPayloadDebug');
+                        const pre = document.getElementById('requestPayloadContent');
+                        if (block && pre && document.getElementById('debugShowRequestPayload')?.checked) {
+                            block.style.display = 'block';
+                            pre.textContent = JSON.stringify(data.request_payload, null, 2);
+                        }
+                    }
+                    if (data.response_payload) {
+                        const block = document.getElementById('responsePayloadDebug');
+                        const pre = document.getElementById('responsePayloadContent');
+                        if (block && pre && document.getElementById('debugShowResponsePayload')?.checked) {
+                            block.style.display = 'block';
+                            pre.textContent = JSON.stringify(data.response_payload, null, 2);
+                        }
+                    }
+                } else if (data.type === 'gpu_stats') {
+                    window.lastSystemStats = data.stats;  // Store for theme changes
+
+                    // Throttle GPU stats updates based on configured interval
+                    const now = Date.now();
+                    const intervalMs = settings.gpuUpdateInterval * 1000;
+
+                    if (now - lastGPUUpdate >= intervalMs) {
+                        // Enough time has passed, update immediately
+                        updateGPUStats(data.stats);
+                        lastGPUUpdate = now;
+                        pendingGPUStats = null;
+                    } else {
+                        // Too soon, store for later update
+                        pendingGPUStats = data.stats;
+                    }
+                } else if (data.type === 'status') {
+                    // Don't show status messages in result balloon (too flashy)
+                    // Status is already shown in the header
+                } else if (data.type === 'server_config') {
+                    // Server sent its current configuration (model, api_base, prompt)
+                    if (data.model) {
+                        document.getElementById('modelName').textContent = data.model;
+                        if (autoStart) {
+                            modelSelect.replaceChildren(new Option(data.model, data.model));
+                        } else if (modelSelect.querySelector(`option[value="${data.model}"]`)) {
+                            modelSelect.value = data.model;
+                        }
+                    }
+                    if (data.api_base) {
+                        apiBaseUrl.value = data.api_base;
+                        checkApiKeyRequirement(data.api_base);
+                        updateSystemStatsVisibility(data.api_base);
+                    }
+                    if (data.process_every != null && !isNaN(data.process_every)) {
+                        processEvery.value = String(data.process_every);
+                    }
+                    thinkingMode.value = data.reasoning_effort ?? '';
+                    thinkingMode.disabled = false;
+                    if (data.prompt) {
+                        promptText.value = data.prompt;
+                        const promptPreview = data.prompt.length > 150 ? data.prompt.substring(0, 150) + '...' : data.prompt;
+                        currentPrompt.textContent = `Prompt: ${promptPreview}`;
+                    }
+                    if (data.max_tokens != null && !isNaN(data.max_tokens)) {
+                        maxTokens.value = String(data.max_tokens);
+                    }
+                    if (autoStartPending) {
+                        autoStartPending = false;
+                        // Camera enumeration briefly opens the device; let it release it first.
+                        camerasReady.then(() => start());
+                    }
+                    const reqCb = document.getElementById('debugShowRequestPayload');
+                    const resCb = document.getElementById('debugShowResponsePayload');
+                    if ((reqCb?.checked || resCb?.checked) && websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(JSON.stringify({
+                            type: 'set_debug',
+                            show_request_payload: !!reqCb?.checked,
+                            show_response_payload: !!resCb?.checked
+                        }));
+                    }
+                } else if (data.type === 'model_updated') {
+                    // Model was updated on server
+                    if (data.model) {
+                        document.getElementById('modelName').textContent = data.model;
+                        console.log('Model updated to:', data.model);
+                    }
+                } else if (data.type === 'reasoning_updated') {
+                    thinkingMode.value = data.reasoning_effort ?? '';
+                    thinkingMode.disabled = false;
+                    thinkingMode.classList.add('applied');
+                    setTimeout(() => thinkingMode.classList.remove('applied'), 600);
+                    if (data.error) updateStatus(data.error, 'disconnected');
+                } else if (data.type === 'prompt_updated') {
+                    // Prompt was updated on server (already handled in applyPrompt)
+                    console.log('Prompt updated:', data.prompt);
+                } else if (data.type === 'processing_updated') {
+                    if (data.process_every != null) processEvery.value = String(data.process_every);
+                    console.log('Processing interval updated:', data.process_every);
+                }
+            };
+
+            websocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            websocket.onclose = () => {
+                thinkingMode.disabled = true;
+                console.log('WebSocket disconnected, will reconnect...');
+                websocket = null;
+                updateStatus('Reconnecting...', 'disconnected');
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+
+        // Start - dispatch to webcam or RTSP based on active tab
+        async function start() {
+            if (isStarting || isAnalysisRunning) return;
+            isStarting = true;
+            try {
+                // Animate big button
+                const bigBtn = document.getElementById('bigStartBtn');
+                bigBtn.classList.add('animating');
+                setTimeout(() => {
+                    bigBtn.classList.remove('animating');
+                    bigBtn.classList.add('streaming');
+                }, 500);
+
+                // Show small stop button
+                document.getElementById('smallStopBtn').classList.add('show');
+
+                const activeTab = document.querySelector('.input-source-tab.active');
+                const inputSource = activeTab ? activeTab.getAttribute('data-source') : 'webcam';
+
+                if (inputSource === 'webcam') {
+                    await startWebcam();
+                } else if (inputSource === 'rtsp') {
+                    await startRTSP();
+                }
+            } finally {
+                isStarting = false;
+            }
+        }
+
+        // Start WebRTC (Webcam mode)
+        async function startWebcam() {
+            try {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    connectWebSocket();
+                }
+
+                updateStatus('Requesting camera...', 'processing');
+
+                // Use selected camera or default
+                const videoConstraints = {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                };
+
+                if (selectedCameraId) {
+                    videoConstraints.deviceId = { exact: selectedCameraId };
+                }
+
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: videoConstraints,
+                    audio: false
+                });
+                videoElement.srcObject = localStream;
+
+                updateStatus('Connecting...', 'processing');
+
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                });
+
+                peerConnection.ontrack = (event) => {
+                    console.log('Received remote track');
+                    if (event.track.kind === 'video') {
+                        videoElement.srcObject = event.streams[0];
+                        // Explicitly play to ensure continuous frame flow
+                        videoElement.play().catch(err => {
+                            console.error('Error playing video:', err);
+                        });
+                    }
+                };
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    switch (peerConnection.iceConnectionState) {
+                        case 'connected':
+                            updateStatus('Streaming', 'connected');
+                            break;
+                        case 'disconnected':
+                        case 'failed':
+                        case 'closed':
+                            updateStatus('Disconnected', 'disconnected');
+                            stop();
+                            break;
+                    }
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sdp: peerConnection.localDescription.sdp,
+                        type: peerConnection.localDescription.type,
+                        session_id: sessionId,
+                    }),
+                });
+
+                const answer = await response.json();
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+
+                isAnalysisRunning = true;
+                updateStatus('Streaming', 'connected');
+
+            } catch (error) {
+                console.error('Error starting webcam:', error);
+                updateStatus(`Error: ${error.message}`, 'disconnected');
+                stop();
+            }
+        }
+
+        // Start RTSP mode
+        async function startRTSP() {
+            try {
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    connectWebSocket();
+                }
+
+                const rtspUrl = document.getElementById('rtspUrl').value.trim();
+
+                if (!rtspUrl) {
+                    alert('Please enter an RTSP URL');
+                    return;
+                }
+
+                updateStatus('Connecting to RTSP stream...', 'processing');
+
+                // Create WebRTC peer connection (no local stream needed for RTSP)
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                // Receive processed video from server
+                peerConnection.ontrack = (event) => {
+                    console.log('Received RTSP stream from server');
+                    if (event.track.kind === 'video') {
+                        videoElement.srcObject = event.streams[0];
+                        // Explicitly play the video to ensure continuous frame flow
+                        videoElement.play().catch(err => {
+                            console.error('Error playing video:', err);
+                        });
+                        updateStatus('Streaming', 'connected');
+                    }
+                };
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    switch (peerConnection.iceConnectionState) {
+                        case 'connected':
+                            updateStatus('Streaming', 'connected');
+                            break;
+                        case 'disconnected':
+                        case 'failed':
+                        case 'closed':
+                            updateStatus('Disconnected', 'disconnected');
+                            stop();
+                            break;
+                    }
+                };
+
+                // Create offer (recvonly - we're only receiving video from server)
+                peerConnection.addTransceiver('video', { direction: 'recvonly' });
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                // Wait for ICE gathering to complete before sending offer (with timeout)
+                // This ensures all ICE candidates are embedded in the SDP
+                console.log('Waiting for ICE gathering to complete...');
+                await new Promise((resolve) => {
+                    if (peerConnection.iceGatheringState === 'complete') {
+                        resolve();
+                    } else {
+                        const checkState = () => {
+                            if (peerConnection.iceGatheringState === 'complete') {
+                                peerConnection.removeEventListener('icegatheringstatechange', checkState);
+                                resolve();
+                            }
+                        };
+                        peerConnection.addEventListener('icegatheringstatechange', checkState);
+
+                        // Timeout after 5 seconds - proceed anyway to avoid hanging
+                        setTimeout(() => {
+                            peerConnection.removeEventListener('icegatheringstatechange', checkState);
+                            console.warn('ICE gathering timeout - proceeding anyway');
+                            resolve();
+                        }, 5000);
+                    }
+                });
+                console.log('ICE gathering state:', peerConnection.iceGatheringState, '- sending offer');
+
+                // Send offer with RTSP URL and session to server
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sdp: peerConnection.localDescription.sdp,
+                        type: peerConnection.localDescription.type,
+                        rtsp_url: rtspUrl,
+                        session_id: sessionId,
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to connect to RTSP stream');
+                }
+
+                const answer = await response.json();
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+
+                isAnalysisRunning = true;
+
+                // Disable RTSP URL field and Test button while streaming
+                rtspUrlInput.disabled = true;
+                document.getElementById('testRtspBtn').disabled = true;
+
+            } catch (error) {
+                console.error('Error starting RTSP:', error);
+                updateStatus(`Error: ${error.message}`, 'disconnected');
+                alert('Failed to connect to RTSP stream: ' + error.message);
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
+        }
+
+        // Stop (handles both webcam and RTSP)
+        async function stop() {
+            // Reset overlay buttons
+            const bigBtn = document.getElementById('bigStartBtn');
+            const smallStopBtn = document.getElementById('smallStopBtn');
+            bigBtn.classList.remove('animating', 'streaming');
+            smallStopBtn.classList.remove('show');
+
+            if (fadeTimeout) {
+                clearTimeout(fadeTimeout);
+                fadeTimeout = null;
+            }
+
+            // Stop webcam (if in webcam mode)
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            // Close WebRTC peer connection (used by both webcam and RTSP)
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            videoElement.srcObject = null;
+
+            isAnalysisRunning = false;
+            updateStatus('Connected', 'connected');
+
+            // Re-enable RTSP URL field and Test button
+            const rtspUrlInput = document.getElementById('rtspUrl');
+            if (rtspUrlInput) {
+                rtspUrlInput.disabled = false;
+            }
+            const testRtspBtn = document.getElementById('testRtspBtn');
+            if (testRtspBtn) {
+                testRtspBtn.disabled = false;
+            }
+
+            const contentDiv = document.getElementById('resultTextContent');
+            if (contentDiv) {
+                contentDiv.textContent = '';
+                contentDiv.innerHTML = '';
+            } else {
+                resultText.textContent = '';
+                resultText.innerHTML = '';
+            }
+            resultText.classList.remove('fade');
+            videoOverlay.textContent = '';
+            lastText = '';
+        }
+
+        // Sidebar start/stop buttons removed - using overlay buttons instead
+        // startBtn.addEventListener('click', start);
+        // stopBtn.addEventListener('click', stop);
+
+        // Load on page load
+        window.addEventListener('load', async () => {
+            // Kiosks use the configured server defaults even if a backend is still warming up.
+            if (!autoStart) {
+                await detectServices();
+                fetchModels();
+            }
+            connectWebSocket();
+
+            // Initialize prompt display
+            const initialPrompt = promptText.value.trim();
+            if (initialPrompt) {
+                const promptPreview = initialPrompt.length > 150 ? initialPrompt.substring(0, 150) + '...' : initialPrompt;
+                currentPrompt.textContent = `Prompt: ${promptPreview}`;
+            }
+
+            // Initialize Lucide icons
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>

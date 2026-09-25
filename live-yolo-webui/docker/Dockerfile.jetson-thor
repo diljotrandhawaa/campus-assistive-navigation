@@ -1,0 +1,77 @@
+# Dockerfile for NVIDIA Jetson Thor (AGX Thor Developer Kit)
+# Based on JetPack 7.x (L4T r38.2+)
+#
+# ✅ Jetson Thor is SBSA-compliant - uses standard ARM64 CUDA containers!
+# Unlike previous Jetsons (Orin, Xavier), Thor doesn't need L4T-specific base images.
+# See: https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_cuda.html
+
+FROM nvcr.io/nvidia/cuda:13.0.0-runtime-ubuntu24.04
+
+# Install Python and system dependencies
+# Ubuntu 24.04 comes with Python 3.12 by default
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libavfilter-dev \
+    libopus-dev \
+    libvpx-dev \
+    pkg-config \
+    libsrtp2-dev \
+    openssl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3 the default python
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+# Set working directory
+WORKDIR /app
+
+# Upgrade pip and build tools
+RUN pip install --no-cache-dir --break-system-packages --ignore-installed --upgrade pip setuptools wheel
+
+# Copy package files first for better layer caching
+COPY pyproject.toml MANIFEST.in ./
+COPY requirements.txt .
+
+# Copy application source
+COPY src/ ./src/
+
+# Install the package in editable mode (includes all dependencies)
+# Note: --break-system-packages is safe in Docker (isolated environment)
+# Ubuntu 24.04 / Python 3.12 has PEP 668 enabled by default
+RUN pip install --no-cache-dir --break-system-packages -e .
+
+# Install jetson-stats from GitHub (latest version for Thor support)
+# PyPI version may not have full Thor support yet
+RUN pip install --no-cache-dir --break-system-packages git+https://github.com/rbonghi/jetson_stats.git
+
+# Copy scripts
+COPY scripts/generate_cert.sh .
+RUN chmod +x generate_cert.sh
+
+# Copy images for documentation/assets if needed
+COPY images/ ./images/
+
+# Generate self-signed SSL certificates (can be overridden by volume mount)
+RUN ./generate_cert.sh
+
+# Expose port
+EXPOSE 8090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('https://localhost:8090', timeout=5, context=__import__('ssl')._create_unverified_context())" || exit 1
+
+# Run the server
+CMD ["python", "-m", "live_vlm_webui.server", "--host", "0.0.0.0", "--port", "8090", "--ssl-cert", "cert.pem", "--ssl-key", "key.pem"]
+

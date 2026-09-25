@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.json
+.tox/
+.hypothesis/
+test-results/
+test-results/**
+
+# Performance testing
+# Local baselines (each developer has their own)
+.performance_baseline.json
+
+# But DO commit target hardware baselines for CI
+# Example: .baseline-jetson-orin-nano.json
+# Example: .baseline-jetson-agx-orin.json
+
+# Profiling artifacts
+*.stats
+profile.*.stats
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Cursor AI reference docs (local only)
+docs/cursor/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter
+.ipynb_checkpoints
+
+# Logs
+*.log
+
+# Build artifacts
+*.whl
+
+# Local config
+.env
+.env.local
+
+# E2E test data (large video files)
+tests/e2e/.test-data/
+
+# SSL certificates (sensitive)
+cert.pem
+key.pem
+*.pem
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Credentials and local certificates
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+certs/
+certificates/
+
+# Downloaded models and generated outputs
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+*.ts
+runs/
+*.log
+*.zip
+*.bak
+yolo_test_result.jpg

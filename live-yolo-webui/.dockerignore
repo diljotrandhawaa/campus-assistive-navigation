@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+!README.md
+
+# Certificates (will be generated in container)
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development
+start_server.sh
+stop_server.sh
+ROADMAP.md
+
+# Docker
+Dockerfile
+Dockerfile.jetson
+Dockerfile.jetson-orin
+Dockerfile.jetson-thor
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
+
+

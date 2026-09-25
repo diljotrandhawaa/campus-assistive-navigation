@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Campus vision · Objects and text</title>
+  <link rel="stylesheet" href="/static/styles.css?v=ocr1">
+  <script src="/static/app.js?v=ocr1" defer></script>
+  <script src="/static/voice.js" defer></script>
+</head>
+<body>
+  <header><div class="brand"><span class="brand-icon">◎</span><div><h1>Live YOLO <span>WebUI</span></h1><p>Campus vision lab · Objects and text</p></div></div><div id="status" class="status">Camera stopped</div></header>
+  <main>
+    <aside class="settings">
+      <section><h2>01 / Camera</h2>
+        <label class="check-label">
+        <input id="spoken-guidance" type="checkbox">
+        Speak camera directions
+        </label>
+        <label for="camera">Video source</label><select id="camera"><option value="">Default camera</option></select><p class="hint">Choose your laptop camera or a USB webcam connected to this computer.</p>
+      <div class="buttons"><button id="start" class="primary">Start camera</button><button id="stop" disabled>Stop</button></div><p id="error" class="error" role="alert"></p></section>
+      <section><h2>02 / Follow a target</h2><label for="target">Target object</label><select id="target"><option>whiteboard</option><option>door</option>
+        <option>elevator door</option>
+        <option>person</option>
+        <option>sign</option><option>stairs</option><option>chair</option><option>table</option></select>
+      <label for="confidence">Minimum confidence <output id="confidence-value">0.25</output></label><input id="confidence" type="range" min="0.10" max="0.90" step="0.05" value="0.25"><p class="hint">Higher values hide less certain detections. Confidence is a model score, not a guarantee.</p></section>
+      <section><h2>03 / Processing</h2><label for="rate">Maximum analysis rate</label><select id="rate"><option value="2">2 frames / second</option><option value="5">5 frames / second</option><option value="8" selected>8 frames / second</option><option value="12">12 frames / second</option><option value="20">20 frames / second</option></select><label for="size">Sent image · longest edge</label><select id="size"><option value="640">640 pixels</option><option value="960">960 pixels</option><option value="1280" selected>1280 pixels</option></select><p class="hint">A fresh frame is sent after each response. Actual speed depends on the GPU and connection.</p></section>
+      <section><h2>04 / Read signs</h2>
+        <label class="check-label"><input id="ocr-enabled" type="checkbox" checked> Enable OCR</label>
+        <p id="ocr-mode" class="hint">Text detection and recognition on GB10.</p>
+        <p class="hint">Hold the camera steady. Use 1280 pixels for small lettering. Text appears in its own captured image below.</p>
+      </section>
+      <div class="model-note"><span class="eyebrow">LOCAL MODEL ON GB10</span><strong id="model">yoloe-26l-seg.pt</strong><span id="device">No VLM API required</span></div>
+    </aside>
+    <div class="workspace">
+      <div class="top-row">
+        <section class="viewer panel"><div class="panel-heading"><h2>Analyzed frame</h2><span id="frame-state">Waiting for camera</span></div><div class="stage"><canvas id="result" width="960" height="540" hidden></canvas><div id="placeholder"><span>◎</span><h3>Your camera, with context.</h3><p>Start the camera to see detections and alignment.</p></div><div id="expired" hidden>Waiting for a fresh analysis</div><div id="preview-wrap" hidden><video id="video" autoplay muted playsinline></video><span>LIVE PREVIEW · UNMIRRORED</span></div></div><div class="viewer-footer"><span><i class="line-key"></i> Camera center</span><span><i class="box-key"></i> Selected target</span><button id="save" disabled>Save annotated frame</button></div></section>
+        <section class="guidance panel"><div class="panel-heading"><h2>Camera direction</h2><span class="eyebrow">LIVE</span></div><div id="direction-card" data-state="idle"><div id="direction-icon">◎</div><h3 id="instruction" aria-live="polite">Start your camera</h3><p id="target-detail">Following: whiteboard</p></div><div class="alignment"><div class="alignment-head"><span>Target alignment</span><span id="offset">—</span></div><div class="gauge"><div class="center-band"></div><div class="center-tick"></div><div id="marker" hidden></div></div><div class="gauge-labels"><span>Left</span><span>Center</span><span>Right</span></div></div><p class="scope-note">These cues help you point the camera at an object. They do not measure distance or confirm that a walking path is clear.</p><div class="detections-heading"><h3>Objects in this frame</h3><span id="object-count">0</span></div><div id="detections"><p class="hint">Detections will appear here.</p></div></section>
+      </div>
+      <section class="ocr-panel panel" aria-labelledby="ocr-heading">
+        <div class="panel-heading"><h2 id="ocr-heading">Text from latest OCR scan</h2><span id="ocr-state">Waiting for camera</span></div>
+        <div class="ocr-content">
+          <div><canvas id="ocr-frame" hidden></canvas><p id="ocr-empty" class="hint">Start the camera to read signs and room numbers.</p></div>
+          <div><div class="ocr-meta"><span id="ocr-time">OCR: —</span><span id="ocr-age">Age: —</span></div>
+            <p class="hint">Recognition scores are shown next to each reading. “Near” describes image position only.</p>
+            <div id="ocr-readings"></div>
+          </div>
+        </div>
+      </section>
+      <section class="metrics panel"><div><span>Frame → overlay</span><strong id="latency">—</strong><small>Capture copy → draw submission</small></div><div><span>Average</span><strong id="average">—</strong><small>Displayed results this session</small></div><div><span>Detector</span><strong id="detector">—</strong><small>Decode + YOLO + result extraction</small></div><div><span>Analysis updates</span><strong id="fps">—</strong><small>Received results per second</small></div><div><span>Result age</span><strong id="age">—</strong><small>Since the analyzed frame was copied</small></div></section>
+      <p class="bottom-note">Frames are analyzed on your GB10. Boxes and instructions belong to the displayed analyzed frame. The inset shows the current camera view.</p>
+    </div>
+  </main>
+</body>
+</html>

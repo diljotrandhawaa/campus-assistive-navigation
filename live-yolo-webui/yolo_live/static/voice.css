@@ -1,0 +1,9 @@
+/* Large native controls remain usable with keyboard, touch, and screen readers. */
+#voice-panel button { min-height: 48px; white-space: normal; }
+#voice-panel .buttons { flex-wrap: wrap; }
+#voice-panel .check-label { display: flex; gap: .7rem; align-items: center; min-height: 48px; }
+#voice-panel input[type="checkbox"] { width: 22px; height: 22px; flex: 0 0 auto; }
+#voice-panel select { min-height: 44px; }
+#voice-panel :focus-visible { outline: 3px solid #f4d875; outline-offset: 4px; }
+#voice-stop { border: 2px solid #e69b92; }
+#voice-status { min-height: 3em; }

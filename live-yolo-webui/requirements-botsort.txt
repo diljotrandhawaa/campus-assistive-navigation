@@ -1,0 +1,2 @@
+# Install inside the existing, working YOLOE environment.
+lap>=0.5.12
