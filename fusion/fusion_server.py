@@ -23,11 +23,20 @@ Protocol "fusion-1" (one WebSocket):
               uint32 LE jpeg_length | jpeg bytes | depth float16 LE (w*h) | confidence uint8 (w*h)
     server -> {"type":"result","id":N,"detector_ms":..,"server_ms":..,"objects":[...]}
               or {"type":"error","id":N,"message":...}
+              "target": null, or the find-mode report
+              {"label","state":"acquired|tracking|lost_briefly|searching","track_id","distance_m","lateral_m","side"}
+    app    -> {"type":"voice_text","text":"find the trash can","request_id":7}   (speech-to-text is on the phone)
+    server -> {"type":"voice_intent","request_id":7,"intent":"find","target":"trash can","exclude":[],
+               "side":null,"prefer":"nearest","say":"Looking for a trash can.","candidates":[]}
+              intents: find, another, cancel, clarify, unsupported, status, help, targets,
+                       mute, unmute, repeat, start_app, stop_app
+    app    -> {"type":"target","action":"cancel"|"find"|"another","label":...}   (direct find-mode control)
 """
 import argparse
 import asyncio
 import importlib.util
 import json
+import re
 import os
 import ssl
 import struct
@@ -37,6 +46,7 @@ import time
 import numpy as np
 
 PROTOCOL = "fusion-1"
+VERSION = "2026-09-25 voice+find"
 
 DEFAULT_CLASSES = [
     "person", "chair", "table", "desk", "door", "stairs", "couch", "bed", "bench", "trash can",
@@ -175,6 +185,13 @@ class Detector:
         self.imgsz = imgsz
         self.tracker = tracker
         self.device = device
+        # Warm up before any phone connects: the first CUDA run (kernel compilation on
+        # the GB10) can take many seconds, long enough for the phone to time out.
+        t0 = time.perf_counter()
+        blank = np.zeros((640, 480, 3), dtype=np.uint8)
+        self.model.track(blank, persist=True, tracker=tracker, imgsz=imgsz, device=device, verbose=False)
+        self.reset_tracks()
+        print(f"Model warmed up in {time.perf_counter() - t0:.1f} s")
 
     def reset_tracks(self):
         # Drops the predictor (and its BoT-SORT state); the next call builds a fresh one.
@@ -222,11 +239,266 @@ def process_frame(detector, smoother, meta, payload, confidence):
     return objects, (t2 - t1) * 1000, (time.perf_counter() - t0) * 1000
 
 
+# ----------------------------------------------------------------------------- find mode
+class TargetLock:
+    """Find mode: lock onto ONE tracked object of the requested class and report it every frame.
+
+    Same idea as yolo_live/voice_direction.TargetController (lock a BoT-SORT id, tolerate
+    short dropouts), but the report is metric (distance + sideways offset from LiDAR)
+    instead of "pan camera left/right".
+    """
+
+    LOST_GRACE = 3.0  # seconds a locked object may be unseen before we search again
+
+    def __init__(self):
+        self.cancel()
+
+    def cancel(self):
+        self.label = None
+        self.side = None          # "left" / "center" / "right" / None
+        self.exclude = set()      # labels to ignore (filled by the future LLM parser)
+        self.prefer = "nearest"
+        self.skip_ids = set()     # track ids rejected with "another one"
+        self.track_id = None
+        self.last_seen = None
+        self.ever_seen = False
+
+    def find(self, label, side=None, exclude=(), prefer=None):
+        self.cancel()
+        self.label = label
+        self.side = side
+        self.exclude = set(exclude or ())
+        self.prefer = prefer or "nearest"
+
+    def another(self):
+        if self.track_id is not None:
+            self.skip_ids.add(self.track_id)
+        self.track_id = None
+        self.last_seen = None
+
+    def set_side(self, side):
+        self.side = side
+        self.track_id = None
+        self.last_seen = None
+
+    @staticmethod
+    def side_of(obj):
+        s = obj.get("side")
+        if s:
+            return "center" if s == "ahead" else s
+        u = (obj["box"][0] + obj["box"][2]) / 2
+        return "left" if u < 1 / 3 else "right" if u > 2 / 3 else "center"
+
+    def update(self, objects, now):
+        if not self.label:
+            return None
+        base = {"label": self.label, "side_filter": self.side}
+        candidates = [o for o in objects
+                      if o["label"] == self.label and o["label"] not in self.exclude
+                      and o.get("track_id") is not None and o["track_id"] not in self.skip_ids]
+
+        if self.track_id is not None:
+            for o in candidates:
+                if o["track_id"] == self.track_id:
+                    self.last_seen = now
+                    o["is_target"] = True
+                    return {**base, "state": "tracking", "track_id": o["track_id"],
+                            "distance_m": o["distance_m"], "lateral_m": o["lateral_m"], "side": o["side"]}
+            if now - self.last_seen <= self.LOST_GRACE:
+                return {**base, "state": "lost_briefly", "track_id": self.track_id}
+            self.track_id = None  # gone: fall through and search again
+
+        eligible = [o for o in candidates if self.side is None or self.side_of(o) == self.side]
+        if not eligible:
+            return {**base, "state": "searching", "seen_before": self.ever_seen}
+        if self.prefer == "nearest":
+            pick = min(eligible, key=lambda o: (o["distance_m"] is None, o["distance_m"] or 0, -o["confidence"]))
+        else:
+            pick = max(eligible, key=lambda o: o["confidence"])
+        self.track_id, self.last_seen, self.ever_seen = pick["track_id"], now, True
+        pick["is_target"] = True
+        return {**base, "state": "acquired", "track_id": pick["track_id"],
+                "distance_m": pick["distance_m"], "lateral_m": pick["lateral_m"], "side": pick["side"]}
+
+    def status_text(self):
+        if not self.label:
+            return "Not searching for anything."
+        where = f" on your {self.side}" if self.side in ("left", "right") else ""
+        return f"Looking for {with_article(self.label)}{where}."
+
+
+# ----------------------------------------------------------------------------- voice
+# The phone does speech-to-text on-device and sends TEXT. This turns text into a
+# fixed-format intent. Today: the existing yolo_live rules + semantic matcher.
+# Later: an LLM parser can fill the same fields (exclude, prefer, ...) with no app change.
+
+VOICE_CONTROLS = {  # yolo_live.voice_intents actions -> app intents
+    "cancel_target": "cancel", "stop_all": "cancel", "stop_camera": "stop_app",
+    "start_camera": "start_app", "pause": "mute", "resume": "unmute", "repeat": "repeat",
+    "status": "status", "help": "help", "targets": "targets",
+}
+ANOTHER_PHRASES = re.compile(
+    r"^(?:(?:no|nope)\s+)?(?:(?:try|find|get|show me)\s+)?"
+    r"(?:another(?: one)?|a different one|the other one|not (?:this|that) one|wrong one|"
+    r"(?:that|this)(?: one)? is wrong|next one)$")
+NEAREST_WORDS = re.compile(r"\b(?:nearest|closest)\b")
+HELP_TEXT = ("You can say: find the door, find a chair on my left, another one, cancel, "
+             "what's ahead, repeat, mute, or unmute.")
+
+
+def with_article(label):
+    return ("an " if label[:1] in "aeiou" else "a ") + label
+
+
+def join_or(items):
+    items = list(items)
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + ", or " + items[-1]
+
+
+def find_webui_dir(explicit=None):
+    """Folder that contains yolo_live/ (the 8091 browser server's code)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    options = [explicit, os.getcwd(), here, os.path.dirname(here),
+               os.path.expanduser("~/indoor-nav/live-yolo-webui")]
+    for folder in options:
+        if folder and os.path.isfile(os.path.join(os.path.expanduser(folder), "yolo_live", "voice_intents.py")):
+            return os.path.abspath(os.path.expanduser(folder))
+    return None
+
+
+class VoiceInterpreter:
+    """Wraps yolo_live.voice_intents (control phrases + rules + semantic matcher)."""
+
+    def __init__(self, classes, webui_dir=None):
+        self.classes = list(classes)
+        self._interpret = None
+        self._warmup = None
+        try:
+            folder = find_webui_dir(webui_dir)
+            if folder is None:
+                raise ImportError("yolo_live/ not found (use --webui-dir ~/indoor-nav/live-yolo-webui)")
+            if folder not in sys.path:
+                sys.path.insert(0, folder)
+            from yolo_live.voice_commands import warmup_command_matcher
+            from yolo_live.voice_intents import interpret_command
+            self._interpret, self._warmup = interpret_command, warmup_command_matcher
+            print(f"Voice: using yolo_live.voice_intents from {folder} (rules + semantic matcher)")
+        except Exception as e:  # noqa: BLE001
+            print(f"Voice: yolo_live voice matcher unavailable ({e}); exact class names only")
+
+    def warmup(self):
+        if self._warmup:
+            try:
+                self._warmup()
+                print("Voice: semantic matcher ready")
+            except Exception as e:  # noqa: BLE001
+                print(f"Voice: semantic matcher failed to load ({e}); rules still work")
+
+    def interpret(self, text):
+        if self._interpret:
+            try:
+                return self._interpret(text)
+            except Exception as e:  # noqa: BLE001
+                print(f"Voice: matcher error ({e}); using exact class names")
+        return self._fallback(text)
+
+    def _fallback(self, text):
+        t = " " + re.sub(r"[^\w\s]", " ", text.lower()) + " "
+        found = [c for c in sorted(self.classes, key=len, reverse=True) if f" {c} " in t]
+        if not found:
+            return {"status": "unsupported_target",
+                    "message": "I didn't recognize an object name. Try: find the door."}
+        side = next((s for s in ("left", "right", "center") if f" {s} " in t), None)
+        return {"status": "resolved", "intent": "select_target", "target": found[0],
+                "horizontal": side, "method": "exact"}
+
+
+def voice_reply(text, interpreter, lock, session, classes):
+    """Returns the fixed-format intent reply and updates the target lock."""
+    out = {"type": "voice_intent", "transcript": text, "intent": "clarify", "target": None,
+           "exclude": [], "side": None, "prefer": None, "say": "", "candidates": [], "method": None}
+    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "'").replace("'", "")).split())
+
+    if ANOTHER_PHRASES.match(clean):
+        if lock.label:
+            lock.another()
+            return {**out, "intent": "another", "target": lock.label, "method": "rule",
+                    "say": f"Looking for another {lock.label}."}
+        return {**out, "intent": "clarify", "method": "rule", "say": "What should I look for?"}
+
+    prefer = "nearest" if NEAREST_WORDS.search(clean) else None
+    query = NEAREST_WORDS.sub(" ", clean) if prefer else text  # the rules reject "nearest"; LiDAR handles it
+    r = interpreter.interpret(query)
+    out["method"] = r.get("method")
+    status, intent = r.get("status"), r.get("intent")
+
+    def start_find(target, side):
+        if target not in classes:
+            return {**out, "intent": "unsupported", "say": f"I can't detect {with_article(target)} yet."}
+        side = "center" if side in ("centre", "middle") else side
+        lock.find(target, side=side, prefer=prefer)
+        session["candidates"] = []
+        where = f" on your {side}" if side in ("left", "right") else " in front of you" if side == "center" else ""
+        near = "the nearest " + target if prefer else with_article(target)
+        return {**out, "intent": "find", "target": target, "side": side, "prefer": lock.prefer,
+                "say": f"Looking for {near}{where}."}
+
+    if status == "resolved":
+        if intent == "select_target":
+            return start_find(r.get("target"), r.get("horizontal"))
+        if intent == "clarify_side":
+            side = r.get("horizontal")
+            if lock.label:
+                lock.set_side(side)
+                return {**out, "intent": "find", "target": lock.label, "side": side,
+                        "say": f"Looking for the {lock.label} on your {side}."}
+            if len(session.get("candidates", [])) == 1:
+                return start_find(session["candidates"][0], side)
+            return {**out, "say": "Which object should I look for?"}
+        if intent == "clarify_choice":
+            options = session.get("candidates", [])
+            i = r.get("choice", 0)
+            if i < len(options):
+                return start_find(options[i], None)
+            return {**out, "say": "Which object should I look for?"}
+        action = VOICE_CONTROLS.get(intent)
+        if action == "cancel":
+            had = lock.label
+            lock.cancel()
+            return {**out, "intent": "cancel", "say": f"Stopped looking for the {had}." if had else "Cancelled."}
+        if action == "status":
+            return {**out, "intent": "status", "target": lock.label, "say": lock.status_text()}
+        if action == "help":
+            return {**out, "intent": "help", "say": HELP_TEXT}
+        if action == "targets":
+            simple = [c for c in classes if " " not in c][:12]
+            return {**out, "intent": "targets", "candidates": list(classes),
+                    "say": f"I can find {len(classes)} kinds of things, including {join_or(simple)}."}
+        if action:
+            return {**out, "intent": action}  # mute / unmute / repeat / start_app / stop_app: the app acts
+        return {**out, "intent": "unsupported",
+                "say": "That command only works on the web page for now."}
+
+    # needs_clarification / unsupported_target / no_speech
+    raw = r.get("candidates") or []
+    options = [c["target"] if isinstance(c, dict) else c for c in raw]
+    options = [c for c in options if c in classes] if status == "needs_clarification" else []
+    session["candidates"] = options
+    say = r.get("message") or "Sorry, I didn't understand."
+    if options and not any(o in say for o in options):
+        say += f" Did you mean {join_or(options)}?"
+    return {**out, "intent": "clarify" if status == "needs_clarification" else "unsupported",
+            "candidates": options, "say": say}
+
+
 # ----------------------------------------------------------------------------- server
 def load_classes(args):
     if args.classes:
         return [c.strip() for c in args.classes.split(",") if c.strip()]
-    path = os.path.join(os.getcwd(), "yolo_live", "direction.py")
+    folder = find_webui_dir(args.webui_dir) or os.getcwd()
+    path = os.path.join(folder, "yolo_live", "direction.py")
     if os.path.exists(path):
         try:
             spec = importlib.util.spec_from_file_location("direction", path)
@@ -241,16 +513,33 @@ def load_classes(args):
     return DEFAULT_CLASSES
 
 
-def build_app(detector):
+def build_app(detector, interpreter=None, webui_dir=None):
+    from concurrent.futures import ThreadPoolExecutor
+
     from aiohttp import WSMsgType, web
 
     state = {"client": None}
     gpu = asyncio.Lock()
+    interpreter = interpreter or VoiceInterpreter(detector.classes, webui_dir)
+    voice_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice")
+
+    async def warm_voice(_app):
+        asyncio.get_running_loop().run_in_executor(voice_pool, interpreter.warmup)
 
     async def health(_request):
-        return web.Response(text=f"LiDAR Alert fusion server ({PROTOCOL}) OK. "
+        return web.Response(text=f"LiDAR Alert fusion server ({PROTOCOL}, {VERSION}) OK. "
                                  f"model={detector.model_path} classes={len(detector.classes)} "
                                  f"phone={'connected' if state['client'] else 'none'}\n")
+
+    async def safe_send(ws, data):
+        if ws.closed:
+            return False
+        try:
+            await ws.send_json(data)
+            return True
+        except (ConnectionResetError, RuntimeError) as e:  # aiohttp ClientConnectionResetError is a ConnectionResetError
+            print(f"Phone went away while sending ({type(e).__name__})")
+            return False
 
     async def ws_handler(request):
         ws = web.WebSocketResponse(max_msg_size=8_000_000, heartbeat=10)
@@ -262,6 +551,8 @@ def build_app(detector):
         state["client"] = ws
         detector.reset_tracks()
         smoother = TrackSmoother()
+        lock = TargetLock()
+        session = {"candidates": []}
         confidence = 0.35
         pending_meta = None
         print(f"Phone connected: {peer}")
@@ -278,9 +569,33 @@ def build_app(detector):
                     kind = m.get("type")
                     if kind == "configure":
                         confidence = min(0.9, max(0.05, float(m.get("confidence", confidence))))
-                        await ws.send_json({"type": "configured", "revision": m.get("revision", 0)})
+                        await safe_send(ws, {"type": "configured", "revision": m.get("revision", 0)})
                     elif kind == "frame":
                         pending_meta = m
+                    elif kind == "voice_text":
+                        text = str(m.get("text", ""))[:400]
+                        try:
+                            reply = await loop.run_in_executor(
+                                voice_pool, voice_reply, text, interpreter, lock, session, detector.classes)
+                        except Exception as e:  # noqa: BLE001
+                            reply = {"type": "voice_intent", "intent": "unsupported", "transcript": text,
+                                     "target": None, "exclude": [], "side": None, "prefer": None,
+                                     "candidates": [], "method": None,
+                                     "say": "Sorry, voice commands failed on the server."}
+                            print(f"Voice error: {e}")
+                        reply["request_id"] = m.get("request_id")
+                        print(f"Voice: {text!r} -> {reply['intent']} {reply.get('target') or ''}")
+                        await safe_send(ws, reply)
+                    elif kind == "target":
+                        # Direct control from the app (local "cancel", arrival, or a tapped choice).
+                        action = m.get("action")
+                        if action == "cancel":
+                            lock.cancel()
+                        elif action == "find" and m.get("label") in detector.classes:
+                            lock.find(m["label"], side=m.get("side"), exclude=m.get("exclude") or (),
+                                      prefer=m.get("prefer"))
+                        elif action == "another":
+                            lock.another()
                 elif msg.type == WSMsgType.BINARY:
                     meta, pending_meta = pending_meta, None
                     if meta is None:
@@ -290,10 +605,13 @@ def build_app(detector):
                         async with gpu:
                             objects, det_ms, srv_ms = await loop.run_in_executor(
                                 None, process_frame, detector, smoother, meta, msg.data, confidence)
-                        await ws.send_json({"type": "result", "id": fid, "objects": objects,
-                                            "detector_ms": round(det_ms, 1), "server_ms": round(srv_ms, 1)})
                     except Exception as e:  # noqa: BLE001
-                        await ws.send_json({"type": "error", "id": fid, "message": str(e)[:200]})
+                        print(f"Frame {fid} failed: {e}")
+                        await safe_send(ws, {"type": "error", "id": fid, "message": str(e)[:200]})
+                        continue
+                    target = lock.update(objects, time.monotonic())
+                    await safe_send(ws, {"type": "result", "id": fid, "objects": objects, "target": target,
+                                         "detector_ms": round(det_ms, 1), "server_ms": round(srv_ms, 1)})
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
@@ -303,6 +621,7 @@ def build_app(detector):
         return ws
 
     app = web.Application()
+    app.on_startup.append(warm_voice)
     app.router.add_get("/", health)
     app.router.add_get("/ws", ws_handler)
     return app
@@ -317,11 +636,14 @@ def main():
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--tracker", default="botsort.yaml")
     p.add_argument("--device", default=None, help="e.g. 0 or cuda:0 (default: auto)")
+    p.add_argument("--webui-dir", help="folder containing yolo_live/ (default: auto-detect, "
+                                       "e.g. ~/indoor-nav/live-yolo-webui)")
     p.add_argument("--cert", help="TLS certificate (then use wss:// in the app)")
     p.add_argument("--key", help="TLS private key")
     args = p.parse_args()
 
     from aiohttp import web
+    print(f"LiDAR Alert fusion server, version {VERSION}")
     classes = load_classes(args)
     print(f"Loading {args.model} ...")
     detector = Detector(args.model, classes, args.imgsz, args.tracker, args.device)
@@ -331,7 +653,7 @@ def main():
         ssl_ctx.load_cert_chain(args.cert, args.key)
     scheme = "wss" if ssl_ctx else "ws"
     print(f"Ready. App server address: {scheme}://<this machine's IP>:{args.port}/ws")
-    web.run_app(build_app(detector), host=args.host, port=args.port, ssl_context=ssl_ctx, print=None)
+    web.run_app(build_app(detector, webui_dir=args.webui_dir), host=args.host, port=args.port, ssl_context=ssl_ctx, print=None)
 
 
 if __name__ == "__main__":
