@@ -6,6 +6,12 @@ def text_words(text):
     return re.findall(r"[a-z0-9]+", t)
 
 
+def clean_text(text):
+    """Spoken command -> lowercase words without punctuation or apostrophes ("don't" -> "dont")."""
+    t = (text or "").lower().replace("’", "").replace("'", "")
+    return " ".join(re.sub(r"[^\w\s]", " ", t).split())
+
+
 def text_matches(text, keywords):
     """Whole-word match, so "women" does not match "men" and "204" does not match "2045"."""
     tokens = text_words(text)

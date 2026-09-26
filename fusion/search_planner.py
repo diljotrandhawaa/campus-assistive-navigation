@@ -7,13 +7,18 @@ cancelled, or given up. It runs on the GB10 with data the server already has eve
 
 Stages
   scan         turn slowly all the way around here (12 slices of 30°, coverage.py)
-  move         walk to the most open spot nearby (floor_map.py), room / unknown places only
+  move         walk to the most open spot nearby (floor_map.best_spot on the shared 5 s
+               floor map), room / unknown places only
   scan_center  turn all the way around again from there
   ask          "It isn't in this room. ... Should I take you to the door?"   (LLM once, search_llm.py)
   to_door      the target lock follows the room's door (exit_planner.exit_spec("room"))
   hall_scan    after the door: look around the hallway
   hall_walk    walk along the hallway reading signs; follow arrow signs; look around again now and then
   done         found / cancelled / gave up
+Re-find mode (mode="refind", any target, started by place_search.py when the target has been out
+of frame for 7 s):
+  refind_scan  turn all the way around, starting toward the side the target was last seen (10 s)
+  help         nothing found: "Help!" every 2 s until the target is found, cancelled, or 5 min pass
 The moment the target itself is locked (sign or door text matches), the planner stops and the
 normal find mode guides the user to it.
 """
@@ -22,12 +27,13 @@ import re
 import numpy as np
 
 from coverage import HeadingCoverage, heading_deg, signed_diff
-from floor_map import FloorMap, obstacle_ahead, open_distance
+from floor_map import best_spot, obstacle_ahead, open_distance
+from space_shape import SpaceMap
 from text_utils import text_matches
 
 SAY_EVERY = 4.0        # s between spoken reminders in a stage
-SCAN_TIMEOUT = 30.0    # s per full turn (one 15 s extension if less than 8 directions were checked)
-SCAN_EXTRA = 15.0
+SCAN_TIMEOUT = 10.0    # s per look-around (full turn); no extension (was 30 s + 15 s)
+HELP_EVERY = 2.0       # s between "Help!" after a re-find look-around found nothing
 MIN_OPEN_M = 1.5       # fallback move: only toward a direction free for at least this far
 MOVE_TIMEOUT = 35.0
 ASK_REMIND = 12.0
@@ -48,7 +54,8 @@ def _name(label):
 
 
 class SearchPlanner:
-    def __init__(self, label, spec, place, lock, door_spec, llm=None, where_next=None):
+    def __init__(self, label, spec, place, lock, door_spec, llm=None, where_next=None, space=None,
+                 mode="place", first_side="right"):
         self.label = label
         self.spec = spec              # the place target (sign/door + keywords)
         self.place = place            # room / restroom / hallway / unknown (at the request)
@@ -57,8 +64,11 @@ class SearchPlanner:
         self.llm = llm
         self.where_next = where_next  # search_llm.where_next or None
         self.coverage = HeadingCoverage()
-        self.floor = FloorMap()
-        self.stage = "scan" if place != "hallway" else "hall_scan"
+        # The shared 5 s LiDAR floor map (scene memory's). Without one (tests), keep our own.
+        self.space = space if space is not None else SpaceMap()
+        self.own_space = space is None
+        self.mode = mode              # "place" (the stages above) or "refind" (look around, then help)
+        self.stage = "refind_scan" if mode == "refind" else ("scan" if place != "hallway" else "hall_scan")
         self.started = None
         self.stage_started = None
         self.last_say = -1e9
@@ -66,11 +76,11 @@ class SearchPlanner:
         self.awaiting = False
         self.declines = 0
         self.goal = None
-        self.turn_side = "right"      # keep turning one way during a look-around
-        self.extended = False         # scan got its one extra 15 s
+        self.turn_side = first_side if mode == "refind" else "right"   # keep turning one way
         self.open_by_bin = {}         # heading slice -> how far it's open (m), seen during look-arounds
         self.reminded = False
         self.move_mode = None         # "turn" / "walk" while moving to the open spot
+        self.halfway_said = False
         self.frames = 0
         self.done = False
         self.searched = []            # for the where-next question
@@ -85,7 +95,7 @@ class SearchPlanner:
         self.stage_started = now
         self.last_say = -1e9
         self.intro_done = False
-        self.extended = False
+        self.halfway_said = False
         if stage in ("scan", "scan_center", "hall_scan"):
             self.coverage.reset()
             self.turn_side = "right"
@@ -102,10 +112,10 @@ class SearchPlanner:
         return [self._msg(say, priority)]
 
     def intro(self):
-        """Added to the spoken reply when the search starts."""
-        if self.stage == "hall_scan":
-            return "I'll look around here first. Turn slowly all the way around."
-        return "I'll look around this area first. Turn slowly to your right, all the way around."
+        """Added to the spoken reply when the search starts (so the first look-around step isn't
+        said again right after it)."""
+        self.intro_done = True
+        return "Turn slowly to your right, all the way around."
 
     def stop(self):
         self.done = True
@@ -118,9 +128,11 @@ class SearchPlanner:
             return []
         if self.started is None:
             self.started = self.stage_started = now
+            if self.intro_done:
+                self.last_say = now      # the reply just said "Turn slowly…": next reminder in 4 s
         self.frames += 1
-        if self.frames % 2 == 0:
-            self.floor.add_frame(frame)
+        if self.own_space and self.mode != "refind":     # the re-find look-around needs no floor map
+            self.space.add(frame, now)
         heading = heading_deg(frame.forward)
         pos = (float(frame.cam_pos[0]), float(frame.cam_pos[2]))
 
@@ -150,26 +162,23 @@ class SearchPlanner:
             msgs.append(self._msg(tap=True))
         n = self.coverage.count()
         waited = now - self.stage_started
-        if n < 8 and not self.extended and waited > SCAN_TIMEOUT:
-            # Don't give up on a look-around the user barely started: one more try.
-            self.extended = True
-            self.stage_started = now - SCAN_TIMEOUT + SCAN_EXTRA
-            self.last_say = now
-            msgs.append(self._msg(f"Keep turning slowly to your {self.turn_side}. "
-                                  "I've only checked part of the way around.", "reply"))
-            return msgs
         if n >= 11 or waited > SCAN_TIMEOUT:
             self.searched.append(f"looked all around {what} ({n} of 12 directions)")
             self._go(next_stage, now)
             return msgs
         if self._due(now):
             side = self.turn_side   # always the same way round, so the instructions never flip
-            if n == 0:
-                say = f"Turn slowly to your {side}. I'm looking for {self.label} signs."
-            elif n >= 6:
-                say = f"Keep turning {side}. More than halfway around."
+            if n == 0 and not self.intro_done:
+                if self.mode == "refind":
+                    say = f"I lost {_name(self.label)}. Turn slowly to your {side}, all the way around."
+                else:
+                    say = f"Turn slowly to your {side}. I'm looking for {self.label} signs."
+                self.intro_done = True
+            elif n >= 6 and not self.halfway_said:
+                say = "More than halfway around."
+                self.halfway_said = True
             else:
-                say = f"Keep turning slowly to your {side}."
+                say = "Keep turning."                    # repeated: shorter
             msgs.append(self._msg(say))
         return msgs
 
@@ -182,7 +191,7 @@ class SearchPlanner:
 
     def _move(self, frame, heading, pos, now, scene):
         if self.goal is None:
-            self.goal = self.floor.best_spot(pos) or self._open_direction_goal(pos)
+            self.goal = best_spot(self.space, pos) or self._open_direction_goal(pos)
             if self.goal is None:  # small room / nothing open: say so, then ask
                 print("Planner: no open spot to move to")
                 self.searched.append("there was no open space to move to")
@@ -211,7 +220,7 @@ class SearchPlanner:
             return []
         self.last_say = now
         if want == "turn":
-            return [self._msg(f"Turn slowly to your {side}.")]
+            return [self._msg(f"Turn {side}." if self.intro_done else f"Turn slowly to your {side}.")]
         if obstacle_ahead(frame, 1.0):
             # Blocked on the way: this is as open as it gets from here. Look around from this spot.
             self._go("scan_center", now)
@@ -219,9 +228,10 @@ class SearchPlanner:
             return [self._msg("Something is in front of you. Stop here and turn slowly all the way around.", "reply")]
         steps = max(1, int(round(dist / STEP_M)))
         where = "" if abs(bearing) < 12 else f", slightly {side}"
-        first = "Let's move to a more open spot. " if not self.intro_done else ""
+        if self.intro_done:                               # repeated: shorter
+            return [self._msg(f"{steps} step{'s' if steps > 1 else ''} more{where}.")]
         self.intro_done = True
-        return [self._msg(f"{first}Walk forward about {steps} step{'s' if steps > 1 else ''}{where}.")]
+        return [self._msg(f"Let's move to a more open spot. Walk forward about {steps} step{'s' if steps > 1 else ''}{where}.")]
 
     def _open_direction_goal(self, pos):
         """Fallback when the floor map is too sparse: a point 1-3 m along the most open
@@ -268,6 +278,15 @@ class SearchPlanner:
             return self._finish(f"I couldn't find the door. Say find {self.label} to try again.", now)
         return []  # the phone's find mode guides to the door and reports arrival
 
+    def _refind_scan(self, frame, heading, pos, now, scene):
+        return self._scan_stage(heading, now, "help", "here")
+
+    def _help(self, frame, heading, pos, now, scene):
+        """The look-around found nothing: call for help until the target is found or cancelled."""
+        if self._due(now, HELP_EVERY):
+            return [self._msg("Help!", "reply")]
+        return []
+
     def _hall_scan(self, frame, heading, pos, now, scene):
         return self._scan_stage(heading, now, "hall_walk", "the hallway")
 
@@ -282,6 +301,9 @@ class SearchPlanner:
             return [self._msg(f"A sign points {hint}. Turn {hint} and walk slowly.")]
         if obstacle_ahead(frame, 1.2):
             return [self._msg("Turn slowly until the way ahead is clear.")]
+        if self.intro_done:
+            return [self._msg("Keep walking.")]          # repeated: shorter
+        self.intro_done = True
         return [self._msg("Walk slowly forward along the hallway. I'm reading the signs.")]
 
     def arrow_hint(self, scene):

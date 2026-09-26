@@ -23,7 +23,7 @@ Protocol "fusion-1" (one WebSocket):
               uint32 LE jpeg_length | jpeg bytes | depth float16 LE (w*h) | confidence uint8 (w*h)
     server -> {"type":"result","id":N,"detector_ms":..,"server_ms":..,"objects":[...]}
               or {"type":"error","id":N,"message":...}
-              "target": null, or the find-mode report
+              "target": null, or the find-mode report; "place": room|restroom|hallway|lobby|stairwell|unknown
               {"label","state":"acquired|tracking|lost_briefly|searching","track_id","distance_m","lateral_m",
                "side","bearing_deg"}   (bearing works beyond LiDAR range; + = right)
     app    -> {"type":"voice_text","text":"find the trash can","request_id":7}   (speech-to-text is on the phone)
@@ -34,6 +34,8 @@ Protocol "fusion-1" (one WebSocket):
     app    -> {"type":"target","action":"cancel"|"find"|"another","label":...}   (direct find-mode control)
     server -> {"type":"text_result","say":"Sign, 8 feet, slightly left: Room 204.","groups":[...]}
               (after "read the sign"; OCR of the next frame with distance/direction per sign)
+    app    -> {"type":"blocked","request_id":N,"target":{...},"layout":{...},"obstacle":...}   (way_around.py)
+    server -> {"type":"way","request_id":N,"status":"default|processing|answer","say":...}
     Places ("find the restroom", "take me to room 204", "find the exit") use the same find mode:
     candidates are sign/door boxes, OCR reads each tracked candidate once, text-matching wins.
 """
@@ -50,13 +52,18 @@ import time
 
 import numpy as np
 
-from text_utils import (count_phrase, direction_words, join_or, natural_join, side_text, spoken_feet,  # noqa: F401
+from text_utils import (clean_text, count_phrase, direction_words, join_or, natural_join, side_text, spoken_feet,  # noqa: F401
                         target_phrase, text_matches, text_words, with_article)
-from scene_memory import ROOM_THINGS, SceneMemory, classify_place  # noqa: F401
+from scene_memory import SceneMemory  # noqa: F401
+import place_vlm  # where the user is (room / hallway / ...), from the camera model (VLM)
+from geometry import BOX_SHRINK, FLOOR_MARGIN, MAX_DEPTH, MIN_CONFIDENCE, FrameData, heading_deg  # noqa: F401
 from place_search import PlaceSearch
+from sign_reader import (BARE_NUMBER, LABELED_NUMBER, SignReading, answer_verify, answer_which,  # noqa: F401
+                         describe_read, group_text_items, where_text)
 from target_lock import TargetLock  # noqa: F401  (find mode: lock, world anchor, report)
 from exit_planner import (BUILDING_EXIT, EXIT_REQUEST, EXIT_SAY, ROOM_EXIT, exit_spec,  # noqa: F401
                           plan_exit)
+import way_around  # way around an obstacle on the way to the target, in a room (LLM + checks)
 
 try:  # the LLM part is optional: without intent_llm.py the server runs rules-only
     from intent_llm import LLMIntent, clean_llm
@@ -64,7 +71,7 @@ except ImportError:
     LLMIntent = clean_llm = None
 
 PROTOCOL = "fusion-1"
-VERSION = "2026-09-25 voice+find+cameratracker+bearing+signs-ocr+llm(intent_llm.py)+exit-planner+place-search+anchored-target"
+VERSION = "2026-09-26 voice+find+cameratracker+bearing+signs-ocr+llm(intent_llm.py)+exit-planner+place-search+anchored-target+way-around-llm+place-vlm+refind"
 
 DEFAULT_CLASSES = [
     "person", "chair", "table", "desk", "door", "stairs", "couch", "bed", "bench", "trash can",
@@ -72,109 +79,7 @@ DEFAULT_CLASSES = [
     "wall", "glass door", "step", "cart", "stroller", "dog", "fire hydrant", "sign", "tv",
 ]
 
-# ----------------------------------------------------------------------------- fusion math
-# Same geometry as DepthSnapshot.swift in the app.
-MIN_CONFIDENCE = 1       # ARKit: 0 low, 1 medium, 2 high
-FLOOR_MARGIN = 0.10      # points this close above the floor count as floor (m)
-MAX_DEPTH = 5.5          # LiDAR is unreliable beyond this (m)
-BOX_SHRINK = 0.10        # ignore the outer 10% of each box (background leaks in)
-
-
-class FrameData:
-    """One ARKit frame's depth + pose, as sent by the phone."""
-
-    def __init__(self, meta, depth, confidence):
-        d = meta["depth"]
-        self.w, self.h = int(d["w"]), int(d["h"])
-        self.depth = depth.reshape(self.h, self.w)
-        self.confidence = confidence.reshape(self.h, self.w)
-        self.fx, self.fy, self.cx, self.cy = (float(v) for v in meta["intrinsics"])
-        # 16 floats, column-major (simd_float4x4 columns) -> row-major matrix
-        self.T = np.asarray(meta["transform"], dtype=np.float64).reshape(4, 4).T
-        self.cam_pos = self.T[:3, 3]
-        f = np.asarray(meta["forward"], dtype=np.float64)          # horizontal (x, z), unit
-        self.forward = f / max(np.linalg.norm(f), 1e-6)
-        self.right = np.array([-self.forward[1], self.forward[0]])
-        self.floor_y = float(meta["floor_y"])
-        self.half_width = float(meta.get("corridor_half_width", 0.35))
-
-    def sensor_rect(self, box):
-        """Normalized upright-portrait box [u1,v1,u2,v2] -> depth-map pixel rect.
-        Portrait (u, v) maps to sensor (sx, sy) with sx = v, sy = 1 - u."""
-        u1, v1, u2, v2 = box
-        bw, bh = u2 - u1, v2 - v1
-        u1, u2 = u1 + bw * BOX_SHRINK, u2 - bw * BOX_SHRINK
-        v1, v2 = v1 + bh * BOX_SHRINK, v2 - bh * BOX_SHRINK
-        x0, x1 = int(v1 * self.w), int(v2 * self.w)
-        y0, y1 = int((1 - u2) * self.h), int((1 - u1) * self.h)
-        x0, y0 = max(0, x0), max(0, y0)
-        x1, y1 = min(self.w - 1, x1), min(self.h - 1, y1)
-        return x0, y0, x1, y1
-
-    def space_hint(self):
-        """Coarse shape of the space ahead from this frame's depth (used to tell a hallway
-        from a room): is it open straight ahead, and are there walls close on each side?"""
-        ys, xs = np.mgrid[0:self.h:4, 0:self.w:4]
-        d = self.depth[ys, xs].astype(np.float64)
-        ok = (self.confidence[ys, xs] >= MIN_CONFIDENCE) & np.isfinite(d) & (d > 0.2) & (d < MAX_DEPTH)
-        if ok.sum() < 200:
-            return None
-        d, xs, ys = d[ok], xs[ok], ys[ok]
-        cam = np.stack([(xs + 0.5 - self.cx) / self.fx * d, -((ys + 0.5 - self.cy) / self.fy * d), -d, np.ones_like(d)])
-        world = self.T @ cam
-        keep = (world[1] > self.floor_y + 0.3) & (world[1] < self.cam_pos[1] + 0.3)  # waist-to-head band
-        rel = np.stack([world[0] - self.cam_pos[0], world[2] - self.cam_pos[2]])[:, keep]
-        ahead, lateral = self.forward @ rel, self.right @ rel
-        center = ahead[np.abs(lateral) < 0.4]
-        open_ahead = center.size < 15 or np.percentile(center, 10) > 3.5
-        band = (ahead > 1.5) & (ahead < 5.0)
-        left = (lateral < -0.4) & (lateral > -2.2) & band
-        right = (lateral > 0.4) & (lateral < 2.2) & band
-        return {"open_ahead": bool(open_ahead), "wall_left": int(left.sum()) >= 30,
-                "wall_right": int(right.sum()) >= 30}
-
-    def bearing(self, box):
-        """Horizontal direction of the box centre relative to the walking direction, in degrees
-        (+ = right). Uses only the camera pose and lens, so it works at any distance, even
-        beyond LiDAR range."""
-        u, v = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-        px, py = v * self.w, (1 - u) * self.h          # portrait (u, v) -> sensor pixel
-        ray = self.T[:3, :3] @ np.array([(px - self.cx) / self.fx, -(py - self.cy) / self.fy, -1.0])
-        flat = np.array([ray[0], ray[2]])
-        if np.linalg.norm(flat) < 1e-6:
-            return None
-        return float(np.degrees(np.arctan2(self.right @ flat, self.forward @ flat)))
-
-    def measure(self, box):
-        """Returns (distance_m, lateral_m, in_path) or (None, None, False)."""
-        x0, y0, x1, y1 = self.sensor_rect(box)
-        if x1 < x0 or y1 < y0:
-            return None, None, False
-        d = self.depth[y0:y1 + 1, x0:x1 + 1].astype(np.float64)
-        c = self.confidence[y0:y1 + 1, x0:x1 + 1]
-        ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1]
-        ok = (c >= MIN_CONFIDENCE) & np.isfinite(d) & (d > 0.05) & (d < MAX_DEPTH)
-        if ok.sum() < 8:
-            return None, None, False
-        d, xs, ys = d[ok], xs[ok], ys[ok]
-        # Depth pixel -> camera space (image y down, camera +Y up, looks along -Z) -> world.
-        cam = np.stack([(xs + 0.5 - self.cx) / self.fx * d,
-                        -((ys + 0.5 - self.cy) / self.fy * d),
-                        -d,
-                        np.ones_like(d)])
-        world = self.T @ cam
-        height = world[1]
-        rel = np.stack([world[0] - self.cam_pos[0], world[2] - self.cam_pos[2]])
-        ahead = self.forward @ rel
-        lateral = self.right @ rel
-        keep = (height > self.floor_y + FLOOR_MARGIN) & (ahead > 0.05)
-        if keep.sum() < 8:
-            return None, None, False
-        ahead, lateral = np.sort(ahead[keep]), np.sort(lateral[keep])
-        near = float(ahead[len(ahead) // 4])        # 25th percentile = object's near surface
-        side = float(lateral[len(lateral) // 2])    # median sideways offset
-        in_path = float(np.mean(np.abs(lateral) < self.half_width)) >= 0.10
-        return near, side, in_path
+# (frame geometry: geometry.py)
 
 
 def unpack_payload(meta, payload):
@@ -250,76 +155,7 @@ def resolve_target(label, classes):
     return None
 
 
-def group_text_items(items):
-    """Joins OCR lines that belong to the same sign (close together in the image)."""
-    groups = []
-    for it in sorted(items, key=lambda i: (i["box"][1], i["box"][0])):
-        cx = (it["box"][0] + it["box"][2]) / 2
-        for g in groups:
-            gx = (g["box"][0] + g["box"][2]) / 2
-            if abs(cx - gx) < 0.2 and it["box"][1] - g["box"][3] < 0.08:
-                g["texts"].append(it["text"])
-                g["box"] = [min(g["box"][0], it["box"][0]), min(g["box"][1], it["box"][1]),
-                            max(g["box"][2], it["box"][2]), max(g["box"][3], it["box"][3])]
-                g["near"] = g["near"] or (it.get("nearby_object") or {}).get("label")
-                break
-        else:
-            groups.append({"texts": [it["text"]], "box": list(it["box"]),
-                           "near": (it.get("nearby_object") or {}).get("label")})
-    return groups
-
-
-# "Lab 3B", "Room 204", "RM 12", or a bare 2-4 digit number like "204"
-LABELED_NUMBER = re.compile(r"\b(room|rm|lab|laboratory|office|classroom|suite)\.?\s*#?\s*([a-z]?\d{1,4}[a-z]?)\b", re.I)
-BARE_NUMBER = re.compile(r"\b([a-z]?\d{2,4}[a-z]?)\b", re.I)
-
-
-def where_text(g):
-    where = direction_words(g.get("bearing_deg"))
-    return f"{spoken_feet(g['distance_m'])}, {where}" if g.get("distance_m") is not None else where
-
-
-def answer_which(groups, room_kind=None):
-    """"What room / lab is this?" -> the number on the nearest sign."""
-    for g in groups:
-        text = " ".join(g["texts"])
-        m = LABELED_NUMBER.search(text)
-        if m:
-            kind = {"rm": "room", "laboratory": "lab"}.get(m.group(1).lower(), m.group(1).lower())
-            number = m.group(2)
-        else:
-            m = BARE_NUMBER.search(text)
-            if not m:
-                continue
-            kind, number = room_kind or "room", m.group(1)
-        return f"This is {kind} {number.upper()}. The sign says: {text}. It's {where_text(g)}."
-    if groups:
-        return f"I can't find a number. The nearest sign says: {' '.join(groups[0]['texts'])}."
-    return "I don't see a sign. Point the phone at the sign next to the door and ask again."
-
-
-def answer_verify(groups, keywords, label=None):
-    """"Is this the chemistry lab?" -> yes/no from the sign text."""
-    if not groups:
-        return "I can't see a sign to check. Point the phone at it and ask again."
-    for g in groups:
-        text = " ".join(g["texts"])
-        if text_matches(text, keywords):
-            return f"Yes. The sign says: {text}. It's {where_text(g)}."
-    return f"I don't think so. The nearest sign says: {' '.join(groups[0]['texts'])}."
-
-
-def describe_read(groups):
-    if not groups:
-        return "I don't see any readable text. Point the phone at the sign and ask again."
-    parts = []
-    for g in groups[:3]:
-        where = direction_words(g.get("bearing_deg"))
-        if g.get("distance_m") is not None:
-            where = f"{spoken_feet(g['distance_m'])}, {where}"
-        thing = f"On the {g['near']}" if g.get("near") else "Sign"
-        parts.append(f"{thing}, {where}: {'. '.join(g['texts'])}.")
-    return " ".join(parts)
+# (reading signs aloud: sign_reader.py)
 
 
 # ----------------------------------------------------------------------------- detector
@@ -544,35 +380,41 @@ def process_frame(detector, sess, meta, payload, confidence):
 
     now = time.monotonic()
     if sess.get("scene") is not None:
-        sess["scene"].add_frame(now, objects, frame.space_hint())
+        sess["scene"].add_frame(now, objects, frame.space_hint(), frame=frame)
+    place = sess.get("place")
+    if place is not None:   # the VLM sees a few recent frames, one per direction, every few seconds
+        place.add_frame(jpeg, heading_deg(frame.forward), now)
+        place.tick(now, lambda: place_vlm.scene_hints(sess.get("scene"), now))
     if getattr(detector, "ocr", None) is not None and spec and spec["keywords"]:
         read_target_text(detector, sess, bgr, objects, tracking, now)
 
     read = None
     if sess.get("read_pending"):
-        sess["read_pending"] = False
+        # "Read the sign": keep looking over several frames while the user turns (sign_reader.py).
         if getattr(detector, "ocr", None) is None:
-            read = {"say": "Reading signs isn't available on the server.", "groups": []}
+            read = {"say": "Reading signs isn't available on the server.", "groups": [], "done": True}
         else:
-            groups = group_text_items(detector.read_full(bgr, objects))
-            for g in groups:
-                d, _, _ = frame.measure(g["box"])
-                g["distance_m"] = None if d is None else round(d, 2)
-                b = frame.bearing(g["box"])
-                g["bearing_deg"] = None if b is None else round(b, 1)
-            groups.sort(key=lambda g: g["distance_m"] if g["distance_m"] is not None else 99)
-            mode = sess.get("read_mode") or {}
-            if mode.get("kind") == "verify":
-                say = answer_verify(groups, mode.get("keywords", []), mode.get("label"))
-            elif mode.get("kind") == "which":
-                say = answer_which(groups, mode.get("room_kind"))
-            else:
-                say = describe_read(groups)
-            read = {"say": say, "groups": groups}
-            if sess.get("scene") is not None:
+            if sess.get("reading") is None:
+                sess["reading"] = SignReading(sess.get("read_mode"), now)
+
+            def read_groups():
+                groups = group_text_items(detector.read_full(bgr, objects))
                 for g in groups:
-                    sess["scene"].add_text(now, " ".join(g["texts"]))
-        sess["read_mode"] = None
+                    d, _, _ = frame.measure(g["box"])
+                    g["distance_m"] = None if d is None else round(d, 2)
+                    b = frame.bearing(g["box"])
+                    g["bearing_deg"] = None if b is None else round(b, 1)
+                groups.sort(key=lambda g: g["distance_m"] if g["distance_m"] is not None else 99)
+                if sess.get("scene") is not None:
+                    for g in groups:
+                        sess["scene"].add_text(now, " ".join(g["texts"]))
+                return groups
+
+            read = sess["reading"].step(now, read_groups)
+        if read is not None and read.get("done"):
+            sess["read_pending"] = False
+            sess["reading"] = None
+            sess["read_mode"] = None
     return objects, tracking, read, (t2 - t1) * 1000, (time.perf_counter() - t0) * 1000
 
 
@@ -775,7 +617,7 @@ def apply_llm(d, out, lock, session, classes):
 
 def voice_reply(text, interpreter, lock, session, classes, llm=None):
     """Rules first (instant); the LLM only when the rules can't handle the request."""
-    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "").replace("'", "")).split())
+    clean = clean_text(text)
     if (EXIT_REQUEST.search(clean) and not PLACE_BLOCK.search(clean)
             and not READ_REQUEST.match(clean) and not VERIFY_QUESTION.match(clean)):
         return plan_exit(text, clean, lock, session, classes, llm)
@@ -800,18 +642,21 @@ def voice_turn(text, interpreter, lock, session, classes, llm=None):
     search = session.get("search")
     if search is None:
         return voice_reply(text, interpreter, lock, session, classes, llm)
-    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "").replace("'", "")).split())
+    clean = clean_text(text)
+    session["reading"] = None                      # a new request restarts / ends any sign reading
     reply = search.answer(text, clean)
-    if reply is not None:
-        return reply
-    return search.after_reply(text, voice_reply(text, interpreter, lock, session, classes, llm))
+    if reply is None:
+        reply = search.after_reply(text, voice_reply(text, interpreter, lock, session, classes, llm))
+    if reply.get("intent") != "read":
+        session["read_pending"] = False
+    return reply
 
 
 def rules_reply(text, interpreter, lock, session, classes):
     """Returns the fixed-format intent reply and updates the target lock."""
     out = {"type": "voice_intent", "transcript": text, "intent": "clarify", "target": None,
            "exclude": [], "side": None, "prefer": None, "say": "", "candidates": [], "method": None}
-    clean = " ".join(re.sub(r"[^\w\s]", " ", text.lower().replace("’", "'").replace("'", "")).split())
+    clean = clean_text(text)
 
     if ANOTHER_PHRASES.match(clean):
         if lock.label:
@@ -833,7 +678,7 @@ def rules_reply(text, interpreter, lock, session, classes):
         if not session.get("ocr"):
             return {**out, "intent": "unsupported", "method": "rule",
                     "say": "Reading signs isn't available on the server."}
-        session["read_pending"] = True   # the next frame is read; the answer comes as "text_result"
+        session["read_pending"] = True   # read while the user turns (sign_reader.py); the answer comes as "text_result"
         session["read_mode"] = None
         return {**out, "intent": "read", "method": "rule", "say": ""}
 
@@ -901,7 +746,7 @@ def rules_reply(text, interpreter, lock, session, classes):
         if intent == "read_text":
             if not session.get("ocr"):
                 return {**out, "intent": "unsupported", "say": "Reading signs isn't available on the server."}
-            session["read_pending"] = True   # the next frame is read; the answer comes as "text_result"
+            session["read_pending"] = True   # read while the user turns (sign_reader.py); the answer comes as "text_result"
             return {**out, "intent": "read", "say": ""}
         action = VOICE_CONTROLS.get(intent)
         if action == "cancel":
@@ -961,7 +806,7 @@ def _base_classes(args):
     return DEFAULT_CLASSES
 
 
-def build_app(detector, interpreter=None, webui_dir=None, llm=None):
+def build_app(detector, interpreter=None, webui_dir=None, llm=None, vlm=None):
     from concurrent.futures import ThreadPoolExecutor
 
     from aiohttp import WSMsgType, web
@@ -970,12 +815,15 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
     gpu = asyncio.Lock()
     interpreter = interpreter or VoiceInterpreter(detector.classes, webui_dir)
     voice_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice")
+    way_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="way")   # way_around.py LLM calls
 
     async def warm_voice(_app):
         loop = asyncio.get_running_loop()
         loop.run_in_executor(voice_pool, interpreter.warmup)
         if llm is not None:
             loop.run_in_executor(voice_pool, llm.warmup)
+        if vlm is not None:
+            loop.run_in_executor(None, vlm.check)
 
     async def health(_request):
         return web.Response(text=f"LiDAR Alert fusion server ({PROTOCOL}, {VERSION}) OK. "
@@ -992,6 +840,30 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
             print(f"Phone went away while sending ({type(e).__name__})")
             return False
 
+    async def handle_blocked(ws, m, session):
+        """Phone: something blocks the way to the locked target. In a room: "Processing, wait."
+        once, then the LLM's checked answer (way_around.py). Elsewhere: the phone's own line.
+        Runs as its own task so frames keep flowing while the LLM thinks."""
+        rid = m.get("request_id")
+        try:
+            now = time.monotonic()
+            place = way_around.place_of(session, now)
+            if place not in way_around.ROOM_PLACES:
+                print(f"Way: place={place}, not a room -> phone's default line")
+                await safe_send(ws, {"type": "way", "request_id": rid, "status": "default", "place": place})
+                return
+            data = way_around.build_input(m, session.get("recent_objects"), now)
+            print(f"Way input: {json.dumps(data, separators=(',', ':'))}")
+            if llm is not None:
+                await safe_send(ws, {"type": "way", "request_id": rid, "status": "processing",
+                                     "say": way_around.PROCESSING_SAY})
+            loop = asyncio.get_running_loop()
+            answer = await loop.run_in_executor(way_pool, way_around.decide, llm, data)
+            await safe_send(ws, {"type": "way", "request_id": rid, "status": "answer", **answer})
+        except Exception as e:  # noqa: BLE001
+            print(f"Way error: {e}")
+            await safe_send(ws, {"type": "way", "request_id": rid, "status": "default", "place": "error"})
+
     async def ws_handler(request):
         ws = web.WebSocketResponse(max_msg_size=8_000_000, heartbeat=10)
         await ws.prepare(request)
@@ -1003,7 +875,8 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
         lock = TargetLock()
         session = {"candidates": [], "lock": lock, "tracking": detector.new_session(), "scene": SceneMemory(),
                    "ocr_cache": {}, "read_pending": False, "last_ocr": 0.0,
-                   "ocr": getattr(detector, "ocr", None) is not None}
+                   "ocr": getattr(detector, "ocr", None) is not None,
+                   "place": place_vlm.PlaceContext(vlm)}   # where the user is (place_vlm.py)
         search = PlaceSearch(detector, lock, session, detector.classes, llm)   # place_search.py
         session["search"] = search
         confidence = 0.35
@@ -1044,6 +917,8 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                         action = m.get("action")
                         if action == "cancel":
                             lock.cancel()
+                            session["read_pending"] = False
+                            session["reading"] = None
                             for g in search.on_target(action, m.get("reason"), time.monotonic()):
                                 await safe_send(ws, g)
                         elif action == "find":
@@ -1054,6 +929,8 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                                           prefer=m.get("prefer"))
                         elif action == "another":
                             lock.another()
+                    elif kind == "blocked":
+                        asyncio.create_task(handle_blocked(ws, m, session))
                 elif msg.type == WSMsgType.BINARY:
                     meta, pending_meta = pending_meta, None
                     if meta is None:
@@ -1069,9 +946,17 @@ def build_app(detector, interpreter=None, webui_dir=None, llm=None):
                         continue
                     now = time.monotonic()
                     target = lock.update(objects, now, tracking, frame=session.get("last_frame"))
+                    session["recent_objects"] = (now, objects)   # names for way_around.py
+                    if target is not None and target.get("state") != session.get("last_state"):
+                        d = target.get("distance_m")
+                        print(f"Target: {target['label']} -> {target['state']}"
+                              + (f" (#{target.get('track_id')} {target.get('matched')}, "
+                                 f"{'?' if d is None else f'{d:.1f} m'})" if target["state"] in ("acquired", "tracking") else ""))
+                        session["last_state"] = target.get("state")
                     await safe_send(ws, {"type": "result", "id": fid, "objects": objects, "target": target,
+                                         "place": session["place"].current(now)["place"],
                                          "detector_ms": round(det_ms, 1), "server_ms": round(srv_ms, 1)})
-                    if search.planner is not None:
+                    if search.planner is not None or lock.spec:   # place search, or the re-find watch
                         try:
                             guides = await loop.run_in_executor(None, search.on_frame, target, now)
                         except Exception as e:  # noqa: BLE001
@@ -1115,6 +1000,10 @@ def main():
     p.add_argument("--llm-model", default="qwen3.5:4b", help="Ollama model for complex voice commands")
     p.add_argument("--llm-url", default="http://127.0.0.1:11434", help="Ollama address")
     p.add_argument("--no-llm", action="store_true", help="rules only, no LLM")
+    p.add_argument("--vlm-url", default="http://127.0.0.1:8080/v1",
+                   help="OpenAI-style VLM server for 'where am I' (zrt serve ... --label vlm)")
+    p.add_argument("--vlm-model", default="vlm", help="served model name (see /v1/models)")
+    p.add_argument("--no-vlm", action="store_true", help="no camera model: the place is always 'unknown'")
     p.add_argument("--ocr-confidence", type=float, default=0.6, help="minimum OCR text score (default 0.6)")
     p.add_argument("--cert", help="TLS certificate (then use wss:// in the app)")
     p.add_argument("--key", help="TLS private key")
@@ -1139,7 +1028,8 @@ def main():
         llm = None
     else:
         llm = LLMIntent(args.llm_url, args.llm_model, classes)
-    web.run_app(build_app(detector, webui_dir=args.webui_dir, llm=llm), host=args.host, port=args.port, ssl_context=ssl_ctx, print=None)
+    vlm = None if args.no_vlm else place_vlm.VLMClient(args.vlm_url, args.vlm_model)
+    web.run_app(build_app(detector, webui_dir=args.webui_dir, llm=llm, vlm=vlm), host=args.host, port=args.port, ssl_context=ssl_ctx, print=None)
 
 
 if __name__ == "__main__":

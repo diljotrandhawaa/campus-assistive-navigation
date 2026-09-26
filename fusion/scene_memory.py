@@ -1,28 +1,47 @@
-"""What the camera saw recently, and a rule-based guess of where the user is.
+"""What the camera saw recently (data only; where the user is comes from place_vlm.py).
 
-SceneMemory keeps the last 15 s: most objects of each class seen at once, sign text read by
-OCR, and the LiDAR space hint (FrameData.space_hint). classify_place() turns that into
-room / restroom / hallway / unknown plus spoken evidence ("I see a whiteboard and 6 chairs").
+SceneMemory keeps the last 5 s: most objects of each class seen at once, sign text read by
+OCR, the LiDAR space hint (FrameData.space_hint), where doors were seen, and the shape of the
+free space around the user (space_shape.SpaceMap). describe() turns it into a short text that
+the VLM gets as hints, and the search planner uses the floor map.
 """
-from text_utils import count_phrase, natural_join, text_matches
+import numpy as np
+
+from space_shape import SpaceMap
+
+# Door-like classes (the detector has many door words); door parts don't count as doors.
+DOOR_PARTS = ("handle", "knob", "lever", "latch", "lock", "pull", "hardware", "trapdoor", "push bar",
+              "panic bar", "button")
+
+
+def is_door(label):
+    return "door" in label and not any(p in label for p in DOOR_PARTS)
 
 class SceneMemory:
     """What the camera saw in the last WINDOW seconds: object counts (most seen at once),
     sign text, and the LiDAR space hint. Detection already sees every class each frame,
     so this costs nothing extra (no tracking)."""
 
-    WINDOW = 15.0
+    WINDOW = 5.0
 
     def __init__(self):
         self.frames = []   # (time, {label: count}, hint)
         self.texts = []    # (time, text)
+        self.doors = []    # (time, x, z) room positions of doors seen with depth
+        self.space = SpaceMap()
 
-    def add_frame(self, now, objects, hint):
+    def add_frame(self, now, objects, hint, frame=None):
         counts = {}
         for o in objects:
             counts[o["label"]] = counts.get(o["label"], 0) + 1
         self.frames.append((now, counts, hint))
         self.frames = [f for f in self.frames if now - f[0] <= self.WINDOW]
+        if frame is not None:
+            self.space.add(frame, now)
+            for o in objects:
+                if is_door(o["label"]) and o.get("distance_m") is not None and o.get("lateral_m") is not None:
+                    self.doors.append((now, *frame.to_world(o["distance_m"], o["lateral_m"])))
+            self.doors = [d for d in self.doors if now - d[0] <= self.WINDOW][-200:]
 
     def add_text(self, now, text):
         if text:
@@ -39,7 +58,18 @@ class SceneMemory:
         hallway = sum(1 for h in hints if h["open_ahead"] and h["wall_left"] and h["wall_right"])
         texts = list(dict.fromkeys(t for tt, t in self.texts if now - tt <= self.WINDOW))
         return {"frames": len(frames), "counts": counts, "texts": texts,
-                "hallway_views": hallway, "views": len(hints)}
+                "hallway_views": hallway, "views": len(hints),
+                "shape": self.space.shape(now), "door_spots": self._door_spots(now)}
+
+    def _door_spots(self, now):
+        """Distinct doors seen (room positions merged within 0.8 m)."""
+        spots = []
+        for t, x, z in self.doors:
+            if now - t > self.WINDOW:
+                continue
+            if all(np.hypot(x - sx, z - sz) > 0.8 for sx, sz in spots):
+                spots.append((x, z))
+        return spots
 
     @staticmethod
     def describe(summary):
@@ -49,47 +79,8 @@ class SceneMemory:
         v = summary["views"]
         space = (f"walls on both sides with open space ahead in {summary['hallway_views']} of {v} views"
                  if v else "no depth information")
-        return f"Seen in the last 15 s (most at once): {seen}. Signs read: {texts}. Space: {space}."
-
-
-ROOM_THINGS = {"whiteboard": 2, "monitor": 1, "laptop": 1, "keyboard": 1, "printer": 1}
-
-
-def classify_place(summary):
-    """Rule-based guess: room / restroom / hallway / unknown, plus the evidence."""
-    c = summary["counts"]
-    if summary["frames"] < 5:
-        return "unknown", "I've only just started looking"
-    if c.get("toilet", 0) >= 1:
-        return "restroom", "I see a toilet"
-    room, why_room = 0, []
-    for label, pts in ROOM_THINGS.items():
-        if c.get(label, 0):
-            room += pts
-            why_room.append(count_phrase(c[label], label))
-    if c.get("chair", 0) >= 3:
-        room += 2
-        why_room.append(f"{c['chair']} chairs")
-    if c.get("table", 0) >= 2:
-        room += 1
-        why_room.append(f"{c['table']} tables")
-    if c.get("sofa", 0) and c.get("table", 0):
-        room += 1
-    hall, why_hall = 0, []
-    if summary["views"] >= 5 and summary["hallway_views"] / summary["views"] >= 0.4:
-        hall += 2
-        why_hall.append("a long open space with walls on both sides")
-    if c.get("door", 0) >= 2:
-        hall += 1
-        why_hall.append(f"{c['door']} doors")
-    if (c.get("exit sign", 0) or any(text_matches(t, ["exit"]) for t in summary["texts"])) and room == 0:
-        hall += 1
-        why_hall.append("an exit sign")
-    if c.get("elevator", 0) or c.get("stairs", 0):
-        hall += 1
-        why_hall.append("an elevator or stairs")
-    if room >= 2 and room > hall:
-        return "room", "I see " + natural_join(why_room[:3])
-    if hall >= 2 and hall > room:
-        return "hallway", "I see " + natural_join(why_hall[:3])
-    return "unknown", "I can't tell yet"
+        shape = summary.get("shape")
+        if shape:
+            space += (f"; free area about {shape['length_m']} m long and {shape['width_m']} m wide"
+                      f"{', walls along both long sides' if shape['walls_both_sides'] else ''}")
+        return f"Seen in the last {SceneMemory.WINDOW:.0f} s (most at once): {seen}. Signs read: {texts}. Space: {space}."

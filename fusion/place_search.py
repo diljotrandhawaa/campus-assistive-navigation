@@ -6,7 +6,7 @@ fusion_server.py only calls these hooks; all search logic lives in the separate 
     floor_map.py        LiDAR floor map, most open spot, obstacle ahead
     dynamic_prompts.py  extra YOLOE sign phrases for this search
     search_llm.py       the two one-time LLM questions
-    scene_memory.py     where the user is (room / hallway / ...)
+    place_vlm.py        where the user is (room / hallway / ...), from the camera model
 
 Hooks
     answer(clean)                     before the normal voice rules: yes/no to "take you to the door?"
@@ -19,15 +19,18 @@ import time
 
 from dynamic_prompts import PromptManager, prompts_for
 from exit_planner import exit_spec
-from scene_memory import SceneMemory, classify_place
+from place_vlm import scene_hints
 from search_planner import SearchPlanner
 
 try:
-    from search_llm import plan_target, where_next
+    from search_llm import where_next
 except ImportError:  # pragma: no cover
-    plan_target = where_next = None
+    where_next = None
+
+PLACE_WAIT_S = 4.0   # wait this long for a fresh VLM answer when the last one is old
 
 NOT_PLACES = ("exit", "door")   # "find an exit" has its own planner (exit_planner.py)
+REFIND_AFTER_S = 7.0            # target out of frame this long (and no fixed room spot): look around
 
 
 def is_place_search(lock):
@@ -44,6 +47,9 @@ class PlaceSearch:
         self.llm = llm
         self.prompts = PromptManager(detector)
         self.planner = None
+        self.out_since = None         # when the target was last in view (re-find timer)
+        self.last_side = "right"      # side it was last seen on
+        self.watch_label = None
 
     # ------------------------------------------------------------------ voice
     def answer(self, text, clean):
@@ -80,18 +86,11 @@ class PlaceSearch:
         spec = dict(self.lock.spec)
         label = spec["label"]
         scene = self.session.get("scene")
-        summary = scene.summary(time.monotonic()) if scene else {"frames": 0, "counts": {}, "texts": [],
-                                                                 "hallway_views": 0, "views": 0}
-        place, why = classify_place(summary)
-        llm_prompts = []
-        if self.llm is not None and plan_target is not None and summary["frames"] and place == "unknown":
-            try:
-                d = plan_target(self.llm, text, label, SceneMemory.describe(summary))
-                if d:
-                    place, llm_prompts = d["place"], d["prompts"]
-            except Exception as e:  # noqa: BLE001
-                print(f"LLM: search plan failed ({e}); using the rules")
-        extra = self.prompts.apply(prompts_for(label, llm_prompts))
+        now = time.monotonic()
+        ctx = self.session.get("place")
+        p = ctx.get(now, lambda: scene_hints(scene, now), wait=PLACE_WAIT_S) if ctx is not None else None
+        place = p["planner_place"] if p else "unknown"
+        extra = self.prompts.apply(prompts_for(label, []))
         if extra:
             # The new sign phrases become candidates of this target. For a restroom a restroom
             # pictogram counts on its own; for room numbers the text still has to match.
@@ -100,9 +99,11 @@ class PlaceSearch:
                 spec["specific"] = set(spec["specific"]) | set(extra)
             self.lock.find(spec, side=self.lock.side, exclude=self.lock.exclude, prefer=self.lock.prefer)
         self.planner = SearchPlanner(label, spec, place, self.lock, exit_spec("room", self.classes),
-                                     llm=self.llm, where_next=where_next if self.llm is not None else None)
-        print(f"Place search: {label} | place={place} | extra prompts: {', '.join(extra) or 'none'}")
-        reply["say"] = f"{reply.get('say', '')} {self.planner.intro()}".strip()
+                                     llm=self.llm, where_next=where_next if self.llm is not None else None,
+                                     space=scene.space if scene is not None else None)
+        print(f"Place search: {label} | place={place} ({p['place'] if p else 'no VLM'}) | extra prompts: {', '.join(extra) or 'none'}")
+        first = (reply.get("say") or "").split(". ")[0].rstrip(".")      # "Looking for a restroom"
+        reply["say"] = f"{first}. {self.planner.intro()}" if first else self.planner.intro()
         reply["planner"] = self.planner.stage
         return reply
 
@@ -110,10 +111,36 @@ class PlaceSearch:
         if self.planner is not None:
             self.planner.stop()
             self.planner = None
+        self.out_since = time.monotonic()
         self.prompts.reset()
 
     # ------------------------------------------------------------------ per frame
+    def _watch(self, report, now):
+        """Re-find: the target has been out of frame for REFIND_AFTER_S (and has no fixed room spot,
+        so the phone can't point to it) -> start a look-around (search_planner mode="refind").
+        Targets LiDAR has measured stay "tracking" from their anchor and never trigger this."""
+        label = self.lock.label if self.lock.spec else None
+        if label != self.watch_label:            # new target / cancelled: restart the timer
+            self.watch_label, self.out_since = label, now
+        if label is None or self.planner is not None or report is None:
+            return
+        if report.get("state") in ("acquired", "tracking"):
+            self.out_since = now
+            b = report.get("bearing_deg")
+            if b is not None and abs(b) > 5:
+                self.last_side = "left" if b < 0 else "right"
+            return
+        if now - self.out_since < REFIND_AFTER_S:
+            return
+        scene = self.session.get("scene")
+        self.planner = SearchPlanner(label, dict(self.lock.spec), "refind", self.lock, None,
+                                     space=scene.space if scene is not None else None,
+                                     mode="refind", first_side=self.last_side)
+        print(f"Re-find: {label} out of frame {now - self.out_since:.0f} s -> look around, "
+              f"starting {self.last_side}")
+
     def on_frame(self, report, now):
+        self._watch(report, now)
         p = self.planner
         frame = self.session.get("last_frame")
         if p is None or p.done or frame is None:
@@ -124,6 +151,7 @@ class PlaceSearch:
         if p.done:
             found = any(m.get("found") for m in msgs)
             self.planner = None
+            self.out_since = now
             if not found:           # gave up: end find mode too
                 self.lock.cancel()
                 self.prompts.reset()

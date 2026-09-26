@@ -1,2 +1,53 @@
-yoloe-26l-seg.pt
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Downloaded models and weights
+/models/
+/.models/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
 mobileclip2_b.ts
+
+# Local backup
+/fusion/backup_before_vlm/
+*.bak
+
+# Test and build outputs
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Generated runs and logs
+runs/
+*.log
+
+# Secrets and local certificates
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# Editor and operating-system files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

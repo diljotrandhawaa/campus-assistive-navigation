@@ -27,28 +27,32 @@ import math
 
 import numpy as np
 
+from geometry import FLOOR_MARGIN
 from text_utils import side_text, target_phrase, text_matches
 
 ANCHOR_BLEND = 0.4          # weight of a new measurement when refreshing the anchor
 ANCHOR_SAME_M = 0.5         # a detection within half its width + this of the anchor is the same object
                             # (tight enough that the next door along the wall is NOT the same door)
 ANCHOR_SAME_DEG = 12.0      # ... or, without depth, this close in direction
-MIN_CONFIDENCE = 1
-MAX_DEPTH = 5.5
-FLOOR_MARGIN = 0.10
 
 
 # ----------------------------------------------------------------------------- anchor geometry
-def anchor_from(frame, o):
-    """World position of a measured object (its near surface) and its width, or None."""
+# (depth -> room math lives in geometry.FrameData)
+def _object_xz(frame, o):
     d, l = o.get("distance_m"), o.get("lateral_m")
     if frame is None or d is None or l is None:
         return None
-    x = frame.cam_pos[0] + frame.forward[0] * d + frame.right[0] * l
-    z = frame.cam_pos[2] + frame.forward[1] * d + frame.right[1] * l
+    return frame.to_world(d, l)
+
+
+def anchor_from(frame, o):
+    """Room position of a measured object (its near surface) and its width, or None."""
+    xz = _object_xz(frame, o)
+    if xz is None:
+        return None
     u1, _, u2, _ = o["box"]
-    width = (u2 - u1) * frame.h * d / frame.fy       # portrait u runs along the depth map's height
-    return {"x": float(x), "y": float(frame.cam_pos[1]), "z": float(z),
+    width = (u2 - u1) * frame.h * o["distance_m"] / frame.fy   # portrait u runs along the depth map's height
+    return {"x": xz[0], "y": float(frame.cam_pos[1]), "z": xz[1],
             "width_m": float(min(3.0, max(0.3, width)))}
 
 
@@ -59,19 +63,10 @@ def _blend(old, new):
     return {k: (1 - w) * old[k] + w * new[k] for k in ("x", "y", "z", "width_m")}
 
 
-def _object_xz(frame, o):
-    d, l = o.get("distance_m"), o.get("lateral_m")
-    if frame is None or d is None or l is None:
-        return None
-    return (frame.cam_pos[0] + frame.forward[0] * d + frame.right[0] * l,
-            frame.cam_pos[2] + frame.forward[1] * d + frame.right[1] * l)
-
-
 def anchor_view(frame, anchor):
     """Distance ahead, sideways offset and direction of the anchor from the current pose.
     Close to and facing the anchor, the LiDAR depth in its direction refines the distance."""
-    rel = np.array([anchor["x"] - frame.cam_pos[0], anchor["z"] - frame.cam_pos[2]])
-    ahead, lateral = float(frame.forward @ rel), float(frame.right @ rel)
+    ahead, lateral = (float(v) for v in frame.relative(anchor["x"], anchor["z"]))
     bearing = math.degrees(math.atan2(lateral, ahead))
     source = "pose"
     if ahead > 0.15 and abs(bearing) < 25:
@@ -95,20 +90,11 @@ def _depth_toward(frame, anchor):
     y0, y1 = int(max(0, py - 24)), int(min(frame.h - 1, py + 24))
     if x1 <= x0 or y1 <= y0:
         return None
-    d = frame.depth[y0:y1 + 1, x0:x1 + 1].astype(np.float64)
-    c = frame.confidence[y0:y1 + 1, x0:x1 + 1]
-    ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1]
-    ok = (c >= MIN_CONFIDENCE) & np.isfinite(d) & (d > 0.05) & (d < MAX_DEPTH)
-    if ok.sum() < 8:
+    x, y, z = frame.world(x0, y0, x1, y1)
+    keep = y > frame.floor_y + FLOOR_MARGIN
+    if x.size < 8 or keep.sum() < 8:
         return None
-    d, xs, ys = d[ok], xs[ok], ys[ok]
-    cam = np.stack([(xs + 0.5 - frame.cx) / frame.fx * d, -((ys + 0.5 - frame.cy) / frame.fy * d),
-                    -d, np.ones_like(d)])
-    w = frame.T @ cam
-    keep = w[1] > frame.floor_y + FLOOR_MARGIN
-    if keep.sum() < 8:
-        return None
-    ahead = frame.forward @ np.stack([w[0] - frame.cam_pos[0], w[2] - frame.cam_pos[2]])[:, keep]
+    ahead, _ = frame.relative(x[keep], z[keep])
     return float(np.percentile(ahead, 25))
 
 

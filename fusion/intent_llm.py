@@ -103,33 +103,6 @@ class LLMIntent:
         return data
 
 
-PLACE_SYSTEM = """A blind user asked for an exit. From what the camera saw recently, decide where they are.
-place: room (classroom, office, lab, meeting room, kitchen), restroom, hallway (corridor, lobby,
-stairwell, entrance area) or unknown. reason: why, in under 12 words, spoken to the user
-(e.g. "I see chairs, tables and a whiteboard"). Only use what is listed; if it is not enough, say unknown."""
-
-PLACE_SCHEMA = {"type": "object", "properties": {
-    "place": {"type": "string", "enum": ["room", "restroom", "hallway", "unknown"]},
-    "reason": {"type": "string"}}, "required": ["place", "reason"]}
-
-
-def _plan_place(self, question, scene_text):
-    """One call per exit request: {"place": room|restroom|hallway|unknown, "reason": str} or None."""
-    t0 = time.perf_counter()
-    r = self._post([{"role": "system", "content": PLACE_SYSTEM},
-                    {"role": "user", "content": f'Question: "{question}"\n{scene_text}'}],
-                   num_predict=60, schema=PLACE_SCHEMA)
-    d = json.loads(r["message"]["content"])
-    print(f"LLM place: {json.dumps(d)} ({time.perf_counter() - t0:.2f} s)")
-    if not isinstance(d, dict) or d.get("place") not in ("room", "restroom", "hallway", "unknown"):
-        return None
-    reason = re.sub(r"[^\w\s,.'-]", "", str(d.get("reason", "")))[:90].strip()
-    return {"place": d["place"], "reason": reason}
-
-
-LLMIntent.plan_place = _plan_place
-
-
 def clean_llm(d, classes):
     """Validates the model's JSON; drops anything outside the allowed values."""
     classes = set(classes)

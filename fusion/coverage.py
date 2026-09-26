@@ -7,22 +7,10 @@ ARKit walking direction the phone sends with every frame, so this costs nothing 
     cov = HeadingCoverage()
     new = cov.update(heading_deg(frame.forward), now)   # -> number of slices newly checked
     cov.count()                                           # -> 0..12
-    cov.next_turn(heading)                                # -> ("right", 60.0) to the nearest unchecked slice
 """
-import math
-
 import numpy as np
 
-
-def heading_deg(forward):
-    """Walking direction (x, z) -> compass-like degrees: 0 = where ARKit started facing,
-    90 = turned right, 270 = turned left."""
-    return math.degrees(math.atan2(float(forward[0]), -float(forward[1]))) % 360.0
-
-
-def signed_diff(a, b):
-    """Smallest signed angle from b to a, in (-180, 180]; + = a is to the right of b."""
-    return (a - b + 180.0) % 360.0 - 180.0
+from geometry import heading_deg, signed_diff  # noqa: F401  (heading_deg re-exported)
 
 
 class HeadingCoverage:
@@ -53,12 +41,3 @@ class HeadingCoverage:
 
     def count(self):
         return int(self.covered().sum())
-
-    def next_turn(self, heading):
-        """Direction and angle to the nearest unchecked slice (None if all checked)."""
-        missing = [c for c, ok in zip(self.centers(), self.covered()) if not ok]
-        if not missing:
-            return None
-        best = min(missing, key=lambda c: abs(signed_diff(c, heading)))
-        d = signed_diff(best, heading)
-        return ("right" if d >= 0 else "left"), abs(d)
